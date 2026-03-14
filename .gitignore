@@ -1,0 +1,10 @@
+build/
+dist/
+*.dylib
+*.o
+*.d
+*.patch
+*.vcvplugin
+.vscode/
+.idea/
+.DS_Store
