@@ -1,5 +1,5 @@
 # If RACK_DIR is not defined when calling the Makefile, default to two directories up
-RACK_DIR ?= /Users/nmarrone/src/Rack-SDK
+RACK_DIR ?= $(HOME)/src/Rack-SDK
 
 # Flags will be included from $(RACK_DIR)/arch.mk and $(RACK_DIR)/compile.mk
 
