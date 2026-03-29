@@ -11,7 +11,11 @@
 
   <!-- Response Symbols -->
   <g fill="none" stroke="#222222" stroke-width="1.5" stroke-linecap="round">
-    <path d="M 14 258 L 20 252" />
-    <path d="M 40 258 Q 45 258 46 252" />
+    <!-- Exponential (Left) -->
+    <path d="M 9 260 Q 14 260 15 254" />
+    <!-- Linear (Center) -->
+    <path d="M 27.48 241 L 33.48 235" />
+    <!-- Logarithmic (Right) -->
+    <path d="M 45 260 Q 45 255 51 254" />
   </g>
 </svg>

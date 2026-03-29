@@ -44,7 +44,7 @@ struct ADVCA : Module {
 		
 		configParam(ATTACK_PARAM, 0.f, 1.f, 0.2f, "Attack Time");
 		configParam(DECAY_PARAM, 0.f, 1.f, 0.2f, "Decay/Release Time");
-		configParam(RESPONSE_PARAM, 0.f, 1.f, 0.f, "Response (0: Lin, 1: Exp)");
+		configParam(RESPONSE_PARAM, 0.f, 1.f, 0.5f, "Response (0: Exp, 0.5: Lin, 1: Log)");
 		configParam(CV_ATTEN_PARAM, 0.f, 1.f, 1.f, "CV Attenuator");
 		
 		configInput(TRIG_INPUT, "Trigger (AD)");
@@ -125,14 +125,23 @@ struct ADVCA : Module {
 
 		// Calculate responses
 		float linGain = gainNorm;
-		// Exponential response curve (x^4 mapping from 0 to 1) for a punchy feel,
-		// or standard exp function: we'll use a polynomial approximation for simplicity and punch.
+		// Exponential response curve (x^4 mapping from 0 to 1) for a punchy feel
 		float expGain = gainNorm * gainNorm * gainNorm * gainNorm;
+		// Logarithmic response curve (approx 1/4 power)
+		float logGain = std::pow(gainNorm, 0.25f);
 
-		float responseMix = params[RESPONSE_PARAM].getValue(); // 0 = Lin, 1 = Exp
+		float responseMix = params[RESPONSE_PARAM].getValue(); // 0 = Exp, 0.5 = Lin, 1 = Log
 		
-		// Crossfade linear to exponential
-		float finalGain = crossfade(linGain, expGain, responseMix);
+		float finalGain;
+		if (responseMix < 0.5f) {
+			// Crossfade Exponential to Linear
+			float mix = responseMix * 2.f;
+			finalGain = crossfade(expGain, linGain, mix);
+		} else {
+			// Crossfade Linear to Logarithmic
+			float mix = (responseMix - 0.5f) * 2.f;
+			finalGain = crossfade(linGain, logGain, mix);
+		}
 
 		// Apply VCA
 		float audioIn = inputs[IN_INPUT].getVoltage();
