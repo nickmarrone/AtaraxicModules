@@ -88,12 +88,12 @@ struct Urusai : Module {
 		float eightBit = (lfsrState8Bit & 1) ? 1.f : -1.f;
 
 		outputs[WHITE_OUTPUT].setVoltage(white * 5.f);
-		outputs[PINK_OUTPUT].setVoltage(pink * 5.f);
-		outputs[BLUE_OUTPUT].setVoltage(blue * 5.f);
+		outputs[PINK_OUTPUT].setVoltage(pink * 15.3f);
+		outputs[BLUE_OUTPUT].setVoltage(blue * 2.5f);
 		outputs[VIOLET_OUTPUT].setVoltage(violet * 5.f);
-		outputs[VELVET_OUTPUT].setVoltage(velvet * 5.f);
-		outputs[CMOS_OUTPUT].setVoltage(cmos * 5.f);
-		outputs[EIGHT_BIT_OUTPUT].setVoltage(eightBit * 5.f);
+		outputs[VELVET_OUTPUT].setVoltage(velvet * 11.f);
+		outputs[CMOS_OUTPUT].setVoltage(cmos * 2.88f);
+		outputs[EIGHT_BIT_OUTPUT].setVoltage(eightBit * 2.88f);
 	}
 };
 
