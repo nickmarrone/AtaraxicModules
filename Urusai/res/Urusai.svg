@@ -2,11 +2,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 380">
   <rect width="30" height="380" fill="#E8EBED"/>
   
-  <rect x="2" y="16" width="26" height="47" fill="#FFFFFF" rx="3"/>
-  <rect x="2" y="65" width="26" height="47" fill="#FFC0CB" rx="3"/>
-  <rect x="2" y="114" width="26" height="47" fill="#ADD8E6" rx="3"/>
-  <rect x="2" y="163" width="26" height="47" fill="#CB99C9" rx="3"/>
-  <rect x="2" y="212" width="26" height="47" fill="#FF4d4d" rx="3"/>
-  <rect x="2" y="261" width="26" height="47" fill="#666666" rx="3"/>
-  <rect x="2" y="310" width="26" height="47" fill="#333333" rx="3"/>
+  <rect x="2" y="98" width="26" height="36" fill="#FFFFFF" rx="3"/>
+  <rect x="2" y="136" width="26" height="36" fill="#FFC0CB" rx="3"/>
+  <rect x="2" y="174" width="26" height="36" fill="#ADD8E6" rx="3"/>
+  <rect x="2" y="212" width="26" height="36" fill="#CB99C9" rx="3"/>
+  <rect x="2" y="250" width="26" height="36" fill="#FF4d4d" rx="3"/>
+  <rect x="2" y="288" width="26" height="36" fill="#666666" rx="3"/>
+  <rect x="2" y="326" width="26" height="36" fill="#333333" rx="3"/>
 </svg>
