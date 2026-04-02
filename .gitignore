@@ -1,6 +1,7 @@
 build/
 dist/
 *.dylib
+*.so
 *.o
 *.d
 *.patch
