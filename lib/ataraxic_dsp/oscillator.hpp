@@ -1,0 +1,98 @@
+#pragma once
+#include <cmath>
+#include <stdint.h>
+
+namespace ataraxic_dsp {
+
+// Basic oscillator with four waveform shapes.
+// Uses a 256-entry LUT with linear interpolation for the sine shape.
+// All other shapes are computed analytically.
+// Phase accumulates from 0.0 to <1.0 per cycle.
+struct Oscillator {
+    enum Shape : uint8_t { SINE, TRIANGLE, SAW, PULSE };
+
+    float phase;  // Current phase in [0, 1)
+
+    Oscillator() : phase(0.0f) {}
+
+    void reset() { phase = 0.0f; }
+
+    // Set phase directly. p is wrapped to [0, 1).
+    void setPhase(float p) {
+        p -= std::floor(p);
+        phase = p;
+    }
+
+    // Process one sample. Advances phase and returns the output in [-1, 1].
+    //   freqHz:     oscillator frequency in Hz
+    //   sampleTime: 1.0f / sampleRate
+    //   shape:      SINE, TRIANGLE, SAW, or PULSE
+    //   pulseWidth: duty cycle for PULSE shape, in (0, 1); default 0.5
+    float process(float freqHz, float sampleTime, Shape shape, float pulseWidth = 0.5f) {
+        phase += freqHz * sampleTime;
+        if (phase >= 1.0f) phase -= 1.0f;
+        return _output(phase, shape, pulseWidth);
+    }
+
+private:
+    // 256-entry sine LUT: sin(2π * i / 256) for i = 0..255.
+    static const float* _lut() {
+        static const float table[256] = {
+             0.000000f,  0.024541f,  0.049068f,  0.073565f,  0.098017f,  0.122411f,  0.146730f,  0.170962f,
+             0.195090f,  0.219101f,  0.242980f,  0.266713f,  0.290285f,  0.313682f,  0.336890f,  0.359895f,
+             0.382683f,  0.405241f,  0.427555f,  0.449611f,  0.471397f,  0.492898f,  0.514103f,  0.534998f,
+             0.555570f,  0.575808f,  0.595699f,  0.615232f,  0.634393f,  0.653173f,  0.671559f,  0.689541f,
+             0.707107f,  0.724247f,  0.740951f,  0.757209f,  0.773010f,  0.788346f,  0.803208f,  0.817585f,
+             0.831470f,  0.844854f,  0.857729f,  0.870087f,  0.881921f,  0.893224f,  0.903989f,  0.914210f,
+             0.923880f,  0.932993f,  0.941544f,  0.949528f,  0.956940f,  0.963776f,  0.970031f,  0.975702f,
+             0.980785f,  0.985278f,  0.989177f,  0.992480f,  0.995185f,  0.997290f,  0.998795f,  0.999699f,
+             1.000000f,  0.999699f,  0.998795f,  0.997290f,  0.995185f,  0.992480f,  0.989177f,  0.985278f,
+             0.980785f,  0.975702f,  0.970031f,  0.963776f,  0.956940f,  0.949528f,  0.941544f,  0.932993f,
+             0.923880f,  0.914210f,  0.903989f,  0.893224f,  0.881921f,  0.870087f,  0.857729f,  0.844854f,
+             0.831470f,  0.817585f,  0.803208f,  0.788346f,  0.773010f,  0.757209f,  0.740951f,  0.724247f,
+             0.707107f,  0.689541f,  0.671559f,  0.653173f,  0.634393f,  0.615232f,  0.595699f,  0.575808f,
+             0.555570f,  0.534998f,  0.514103f,  0.492898f,  0.471397f,  0.449611f,  0.427555f,  0.405241f,
+             0.382683f,  0.359895f,  0.336890f,  0.313682f,  0.290285f,  0.266713f,  0.242980f,  0.219101f,
+             0.195090f,  0.170962f,  0.146730f,  0.122411f,  0.098017f,  0.073565f,  0.049068f,  0.024541f,
+             0.000000f, -0.024541f, -0.049068f, -0.073565f, -0.098017f, -0.122411f, -0.146730f, -0.170962f,
+            -0.195090f, -0.219101f, -0.242980f, -0.266713f, -0.290285f, -0.313682f, -0.336890f, -0.359895f,
+            -0.382683f, -0.405241f, -0.427555f, -0.449611f, -0.471397f, -0.492898f, -0.514103f, -0.534998f,
+            -0.555570f, -0.575808f, -0.595699f, -0.615232f, -0.634393f, -0.653173f, -0.671559f, -0.689541f,
+            -0.707107f, -0.724247f, -0.740951f, -0.757209f, -0.773010f, -0.788346f, -0.803208f, -0.817585f,
+            -0.831470f, -0.844854f, -0.857729f, -0.870087f, -0.881921f, -0.893224f, -0.903989f, -0.914210f,
+            -0.923880f, -0.932993f, -0.941544f, -0.949528f, -0.956940f, -0.963776f, -0.970031f, -0.975702f,
+            -0.980785f, -0.985278f, -0.989177f, -0.992480f, -0.995185f, -0.997290f, -0.998795f, -0.999699f,
+            -1.000000f, -0.999699f, -0.998795f, -0.997290f, -0.995185f, -0.992480f, -0.989177f, -0.985278f,
+            -0.980785f, -0.975702f, -0.970031f, -0.963776f, -0.956940f, -0.949528f, -0.941544f, -0.932993f,
+            -0.923880f, -0.914210f, -0.903989f, -0.893224f, -0.881921f, -0.870087f, -0.857729f, -0.844854f,
+            -0.831470f, -0.817585f, -0.803208f, -0.788346f, -0.773010f, -0.757209f, -0.740951f, -0.724247f,
+            -0.707107f, -0.689541f, -0.671559f, -0.653173f, -0.634393f, -0.615232f, -0.595699f, -0.575808f,
+            -0.555570f, -0.534998f, -0.514103f, -0.492898f, -0.471397f, -0.449611f, -0.427555f, -0.405241f,
+            -0.382683f, -0.359895f, -0.336890f, -0.313682f, -0.290285f, -0.266713f, -0.242980f, -0.219101f,
+            -0.195090f, -0.170962f, -0.146730f, -0.122411f, -0.098017f, -0.073565f, -0.049068f, -0.024541f,
+        };
+        return table;
+    }
+
+    // Linearly interpolated sine LUT lookup. ph in [0, 1).
+    static float _sine(float ph) {
+        float  idx  = ph * 256.0f;
+        int    i0   = (int)idx & 255;
+        int    i1   = (i0 + 1) & 255;
+        float  frac = idx - (float)(int)idx;
+        const float* t = _lut();
+        return t[i0] + frac * (t[i1] - t[i0]);
+    }
+
+    static float _output(float ph, Shape shape, float pulseWidth) {
+        switch (shape) {
+            case SINE:     return _sine(ph);
+            case TRIANGLE: return 1.0f - 4.0f * std::fabs(ph - 0.5f);
+            case SAW:      return 2.0f * ph - 1.0f;
+            case PULSE:    return (ph < pulseWidth) ? 1.0f : -1.0f;
+            default:       return 0.0f;
+        }
+    }
+};
+
+} // namespace ataraxic_dsp

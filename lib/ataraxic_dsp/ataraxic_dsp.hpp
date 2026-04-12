@@ -19,3 +19,4 @@
 #include "vca.hpp"
 #include "onepole.hpp"
 #include "noise.hpp"
+#include "oscillator.hpp"

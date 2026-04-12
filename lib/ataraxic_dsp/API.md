@@ -373,6 +373,52 @@ Multiply raw generator output by the corresponding constant before sending to a 
 
 ---
 
+## Oscillator (`oscillator.hpp`)
+
+Phase-accumulator oscillator with four waveform shapes. Sine is computed via a 256-entry LUT with linear interpolation; triangle, saw, and pulse are computed analytically. Output is in `[-1, 1]`.
+
+```cpp
+struct Oscillator {
+    enum Shape : uint8_t { SINE, TRIANGLE, SAW, PULSE };
+
+    float phase;   // Current phase in [0, 1) (readable/writable)
+
+    void  reset();
+    void  setPhase(float p);
+    float process(float freqHz, float sampleTime, Shape shape, float pulseWidth = 0.5f);
+};
+```
+
+| Member | Description |
+|--------|-------------|
+| `reset()` | Resets phase to 0. |
+| `setPhase(p)` | Sets phase directly. `p` is wrapped to `[0, 1)`. |
+| `process(freqHz, sampleTime, shape, pulseWidth)` | Advances phase by `freqHz * sampleTime` and returns the current output in `[-1, 1]`. `pulseWidth` is only used by the `PULSE` shape and should be in `(0, 1)`. |
+
+**Waveform shapes:**
+
+| Shape | Formula |
+|-------|---------|
+| `SINE` | LUT lookup with linear interpolation, 256-entry table |
+| `TRIANGLE` | `1 - 4 * |phase - 0.5|` — rises from −1 at phase 0 to +1 at phase 0.5, then back to −1 |
+| `SAW` | `2 * phase - 1` — ramps from −1 to +1 per cycle |
+| `PULSE` | `+1` when `phase < pulseWidth`, else `−1`; `pulseWidth = 0.5` gives a square wave |
+
+**Example:**
+```cpp
+ataraxic_dsp::Oscillator osc;
+
+// In process loop (sampleTime = 1.0f / sampleRate):
+float out = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::SINE);
+
+// Pulse wave with 30% duty cycle:
+float pw = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::PULSE, 0.3f);
+```
+
+RAM budget on Cortex-M: ~4 bytes (phase only). The 256-entry LUT is `static const` — stored once in flash regardless of how many `Oscillator` instances exist.
+
+---
+
 ## Embedded CMake Integration
 
 ```cmake
