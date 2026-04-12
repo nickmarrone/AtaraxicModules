@@ -1,5 +1,9 @@
 #include "plugin.hpp"
-#include <random>
+#include "../../lib/ataraxic_dsp/ataraxic_dsp.hpp"
+
+static float rackRngWrapper(void*) {
+    return rack::random::uniform();
+}
 
 struct ToneCutoffQuantity : ParamQuantity {
 	float getCutoff() {
@@ -44,25 +48,7 @@ struct Urusai : Module {
 		LIGHTS_LEN
 	};
 
-	float white = 0.f;		// White is used to generate many other noises
-	float lastWhite = 0.f;
-	bool whiteGenerated = false;
-
-	float pink = 0.f;		// Pink is used to generate blue noise
-	float lastPink = 0.f;
-	float b0 = 0.f, b1 = 0.f, b2 = 0.f, b3 = 0.f, b4 = 0.f, b5 = 0.f, b6 = 0.f;
-	bool pinkGenerated = false;
-
-	uint32_t lfsrStateCmos = 0xACE1u;
-	float cmosPhase = 0.f;
-
-	uint32_t lfsrState8Bit = 0xACE1u;
-	float eightBitPhase = 0.f;
-
-	float whiteLp = 0.f, whiteHpLp = 0.f;
-	float pinkLp = 0.f, pinkHpLp = 0.f;
-	float blueLp = 0.f, blueHpLp = 0.f;
-	float violetLp = 0.f, violetHpLp = 0.f;
+	ataraxic_dsp::UrusaiDsp dsp;
 
 	Urusai() {
 		config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -76,148 +62,65 @@ struct Urusai : Module {
 		configOutput(VELVET_OUTPUT, "Velvet Noise");
 		configOutput(CMOS_OUTPUT, "CMOS Noise");
 		configOutput(EIGHT_BIT_OUTPUT, "8-Bit Noise");
-	}
 
-	// whiteNoise generates white noise
-	float whiteNoise() {
-		if (!whiteGenerated) {
-			white = random::uniform() * 2.f - 1.f;
-			whiteGenerated = true;
-		}
-		return white;
-	}
-
-	// pinkNoise generates pink noise
-	float pinkNoise() {
-		if (!pinkGenerated) {
-			float white = whiteNoise();
-			b0 = 0.99886f * b0 + white * 0.0555179f;
-			b1 = 0.99332f * b1 + white * 0.0750759f;
-			b2 = 0.96900f * b2 + white * 0.1538520f;
-			b3 = 0.86650f * b3 + white * 0.3104856f;
-			b4 = 0.55000f * b4 + white * 0.5329522f;
-			b5 = -0.7616f * b5 - white * 0.0168980f;
-			pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362f;
-			b6 = white * 0.115926f;
-			pink *= 0.11f; 
-			pinkGenerated = true;
-		}
-		return pink;
-	}
-
-	// blueNoise generates blue noise
-	float blueNoise() {
-		float pink = pinkNoise();
-		float blue = pink - lastPink;
-		lastPink = pink;
-		blue *= 10.f; // gain compensation
-		return blue;
-	}
-
-	// violetNoise generates violet noise
-	float violetNoise() {
-		float white = whiteNoise();
-		float violet = white - lastWhite;
-		lastWhite = white;
-		violet *= 0.707f; // gain compensation
-		return violet;
-	}
-
-	// velvetNoise generates velvet noise
-	float velvetNoise(const ProcessArgs& args, float character) {
-		float velvetRate = std::pow(10.f, 1.f + 3.f * character); // 10Hz to 10000Hz based on character
-		float p = velvetRate * args.sampleTime;
-		float velvet = 0.f;
-		if (random::uniform() < p) {
-			velvet = (whiteNoise() > 0.f) ? 1.f : -1.f;
-		}
-		return velvet;
-	}
-
-	// cmosNoise generates cmos noise
-	float cmosNoise(const ProcessArgs& args, float character) {
-		float rate = std::pow(10.f, 3.f + 1.8f * character); // sweep CMOS clock rate from 1000Hz to ~63kHz (Nyquist)
-		cmosPhase += rate * args.sampleTime;
-		if (cmosPhase >= 1.f) {
-			cmosPhase -= 1.f;
-			// 17-bit LFSR (like MM5837 chip commonly used in analog synths)
-			// Taps for 17-bit: 17 and 14 (indices 16 and 13)
-			unsigned bitCmos = ((lfsrStateCmos >> 13) ^ (lfsrStateCmos >> 16)) & 1;
-			lfsrStateCmos = (lfsrStateCmos << 1) | bitCmos;
-		}
-		return ((lfsrStateCmos >> 16) & 1) ? 1.f : -1.f;
-	}
-
-	// eightBitNoise generates 8-bit noise
-	float eightBitNoise(const ProcessArgs& args, float character) {
-		float rate = std::pow(10.f, 1.f + 3.f * character); // Sweep rate from 10Hz to 10000Hz
-		eightBitPhase += rate * args.sampleTime;
-		if (eightBitPhase >= 1.f) {
-			eightBitPhase -= 1.f;
-			// 15-bit LFSR (classic NES style noise)
-			// Taps: 14 and 13
-			unsigned bit8 = ((lfsrState8Bit >> 13) ^ (lfsrState8Bit >> 14)) & 1;
-			lfsrState8Bit = (lfsrState8Bit << 1) | bit8;
-		}
-		return ((lfsrState8Bit >> 14) & 1) ? 1.f : -1.f;
+		dsp.init(rackRngWrapper);
 	}
 
 	void process(const ProcessArgs& args) override {
-		whiteGenerated = false;
-		pinkGenerated = false;
+		dsp.beginSample();
 
 		float character = params[COLOR_PARAM].getValue();
 		if (inputs[COLOR_INPUT].isConnected()) {
 			character += inputs[COLOR_INPUT].getVoltage() / 10.f;
 		}
 		character = clamp(character, 0.f, 1.f);
-		
-		float lpCutoff = std::pow(10.f, 1.f + 3.3f * clamp(character / 0.5f, 0.f, 1.f)); 
+
+		float lpCutoff = std::pow(10.f, 1.f + 3.3f * clamp(character / 0.5f, 0.f, 1.f));
 		float hpCutoff = std::pow(10.f, 1.f + 3.3f * clamp((character - 0.5f) / 0.5f, 0.f, 1.f));
-		
+
 		float gLp = clamp(lpCutoff * args.sampleTime * 3.14159f, 0.f, 1.f);
 		float gHp = clamp(hpCutoff * args.sampleTime * 3.14159f, 0.f, 1.f);
 
 		bool isHp = character >= 0.5f;
 
 		if (outputs[WHITE_OUTPUT].isConnected()) {
-			float in = whiteNoise() * 5.f;
-			whiteLp += gLp * (in - whiteLp);
-			whiteHpLp += gHp * (in - whiteHpLp);
-			outputs[WHITE_OUTPUT].setVoltage(isHp ? (in - whiteHpLp) : whiteLp);
+			float in = dsp.getWhite() * ataraxic_dsp::URUSAI_GAIN_WHITE;
+			dsp.whiteLp  += gLp * (in - dsp.whiteLp);
+			dsp.whiteHpLp += gHp * (in - dsp.whiteHpLp);
+			outputs[WHITE_OUTPUT].setVoltage(isHp ? (in - dsp.whiteHpLp) : dsp.whiteLp);
 		}
 
 		if (outputs[PINK_OUTPUT].isConnected()) {
-			float in = pinkNoise() * 15.3f;
-			pinkLp += gLp * (in - pinkLp);
-			pinkHpLp += gHp * (in - pinkHpLp);
-			outputs[PINK_OUTPUT].setVoltage(isHp ? (in - pinkHpLp) : pinkLp);
+			float in = dsp.getPink() * ataraxic_dsp::URUSAI_GAIN_PINK;
+			dsp.pinkLp  += gLp * (in - dsp.pinkLp);
+			dsp.pinkHpLp += gHp * (in - dsp.pinkHpLp);
+			outputs[PINK_OUTPUT].setVoltage(isHp ? (in - dsp.pinkHpLp) : dsp.pinkLp);
 		}
 
 		if (outputs[BLUE_OUTPUT].isConnected()) {
-			float in = blueNoise() * 2.5f;
-			blueLp += gLp * (in - blueLp);
-			blueHpLp += gHp * (in - blueHpLp);
-			outputs[BLUE_OUTPUT].setVoltage(isHp ? (in - blueHpLp) : blueLp);
+			float in = dsp.getBlue() * ataraxic_dsp::URUSAI_GAIN_BLUE;
+			dsp.blueLp  += gLp * (in - dsp.blueLp);
+			dsp.blueHpLp += gHp * (in - dsp.blueHpLp);
+			outputs[BLUE_OUTPUT].setVoltage(isHp ? (in - dsp.blueHpLp) : dsp.blueLp);
 		}
 
 		if (outputs[VIOLET_OUTPUT].isConnected()) {
-			float in = violetNoise() * 5.f;
-			violetLp += gLp * (in - violetLp);
-			violetHpLp += gHp * (in - violetHpLp);
-			outputs[VIOLET_OUTPUT].setVoltage(isHp ? (in - violetHpLp) : violetLp);
+			float in = dsp.getViolet() * ataraxic_dsp::URUSAI_GAIN_VIOLET;
+			dsp.violetLp  += gLp * (in - dsp.violetLp);
+			dsp.violetHpLp += gHp * (in - dsp.violetHpLp);
+			outputs[VIOLET_OUTPUT].setVoltage(isHp ? (in - dsp.violetHpLp) : dsp.violetLp);
 		}
 
 		if (outputs[VELVET_OUTPUT].isConnected()) {
-			outputs[VELVET_OUTPUT].setVoltage(velvetNoise(args, character) * 11.f);
+			outputs[VELVET_OUTPUT].setVoltage(dsp.getVelvet(character, args.sampleTime) * ataraxic_dsp::URUSAI_GAIN_VELVET);
 		}
 
 		if (outputs[CMOS_OUTPUT].isConnected()) {
-			outputs[CMOS_OUTPUT].setVoltage(cmosNoise(args, character) * 2.88f);
+			outputs[CMOS_OUTPUT].setVoltage(dsp.getCmos(character, args.sampleTime) * ataraxic_dsp::URUSAI_GAIN_CMOS);
 		}
 
 		if (outputs[EIGHT_BIT_OUTPUT].isConnected()) {
-			outputs[EIGHT_BIT_OUTPUT].setVoltage(eightBitNoise(args, character) * 2.88f);
+			outputs[EIGHT_BIT_OUTPUT].setVoltage(dsp.getEightBit(character, args.sampleTime) * ataraxic_dsp::URUSAI_GAIN_8BIT);
 		}
 	}
 };
@@ -228,7 +131,7 @@ struct UrusaiLabels : Widget {
 	void draw(const DrawArgs& args) override {
 		std::shared_ptr<Font> font = APP->window->uiFont;
 		if (!font) return;
-		
+
 		if (!boldFont) {
 			boldFont = APP->window->loadFont(asset::system("res/fonts/Nunito-Bold.ttf"));
 		}

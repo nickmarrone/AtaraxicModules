@@ -1,4 +1,5 @@
 #include "plugin.hpp"
+#include "../../lib/ataraxic_dsp/ataraxic_dsp.hpp"
 
 struct ADVCA : Module {
 	enum ParamId {
@@ -25,33 +26,23 @@ struct ADVCA : Module {
 		LIGHTS_LEN
 	};
 
-	enum EnvState {
-		ENV_OFF,
-		ENV_ATTACK,
-		ENV_SUSTAIN,
-		ENV_DECAY_RELEASE
-	};
-
-	// Envelope state variables
-	EnvState envState = ENV_OFF;
-	float envOut = 0.f;
-	dsp::SchmittTrigger trigTrigger;
-	dsp::SchmittTrigger gateSchmittTrigger;
-	bool isARMode = false;
+	ataraxic_dsp::EnvelopeADAR envelope;
+	ataraxic_dsp::SchmittTrigger trigTrigger;
+	ataraxic_dsp::SchmittTrigger gateSchmittTrigger;
 
 	ADVCA() {
 		config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
-		
+
 		configParam(ATTACK_PARAM, 0.f, 1.f, 0.2f, "Attack Time");
 		configParam(DECAY_PARAM, 0.f, 1.f, 0.2f, "Decay/Release Time");
 		configParam(RESPONSE_PARAM, 0.f, 1.f, 0.5f, "Response (0: Exp, 0.5: Lin, 1: Log)");
 		configParam(CV_ATTEN_PARAM, 0.f, 1.f, 1.f, "CV Attenuator");
-		
+
 		configInput(TRIG_INPUT, "Trigger (AD)");
 		configInput(GATE_INPUT, "Gate (AR)");
 		configInput(IN_INPUT, "Audio In");
 		configInput(CV_INPUT, "VCA CV");
-		
+
 		configOutput(ENV_OUTPUT, "Envelope Out");
 		configOutput(OUT_OUTPUT, "Audio Out");
 	}
@@ -60,55 +51,24 @@ struct ADVCA : Module {
 		// --- ENVELOPE ---
 		bool gate = inputs[GATE_INPUT].getVoltage() >= 1.0f;
 		float attackParam = params[ATTACK_PARAM].getValue();
-		float decayParam = params[DECAY_PARAM].getValue();
+		float decayParam  = params[DECAY_PARAM].getValue();
 
 		// Time scaling: Map 0-1 param to 1ms -> 10s using a cubic curve.
 		// A cubic curve (x^3) gives a more natural "log pot" feel than the pure exponential formula,
 		// spreading out the mid-range times more evenly.
-		float baseTime = 0.001f;
-		float maxAttackTime = 2.0f;
-		float maxDecayTime = 10.0f;
-		float attackTime = baseTime + (maxAttackTime - baseTime) * std::pow(attackParam, 3.f);
-		float decayTime = baseTime + (maxDecayTime - baseTime) * std::pow(decayParam, 3.f);
+		float attackTime = ataraxic_dsp::advcaScaleTime(attackParam, 0.001f, 2.0f);
+		float decayTime  = ataraxic_dsp::advcaScaleTime(decayParam,  0.001f, 10.0f);
 
 		float attackRate = 1.f / (attackTime * args.sampleRate);
-		float decayRate = 1.f / (decayTime * args.sampleRate);
+		float decayRate  = 1.f / (decayTime  * args.sampleRate);
 
 		if (trigTrigger.process(inputs[TRIG_INPUT].getVoltage())) {
-			envState = ENV_ATTACK;
-			isARMode = false;
+			envelope.triggerAD();
 		} else if (gateSchmittTrigger.process(inputs[GATE_INPUT].getVoltage())) {
-			envState = ENV_ATTACK;
-			isARMode = true;
+			envelope.triggerAR();
 		}
 
-		switch (envState) {
-			case ENV_OFF:
-				envOut = 0.f;
-				break;
-			case ENV_ATTACK:
-				envOut += attackRate;
-				if (envOut >= 1.f) {
-					envOut = 1.f;
-					envState = isARMode ? ENV_SUSTAIN : ENV_DECAY_RELEASE;
-				} else if (isARMode && !gate) {
-					envState = ENV_DECAY_RELEASE;
-				}
-				break;
-			case ENV_SUSTAIN:
-				envOut = 1.f;
-				if (!gate) {
-					envState = ENV_DECAY_RELEASE;
-				}
-				break;
-			case ENV_DECAY_RELEASE:
-				envOut -= decayRate;
-				if (envOut <= 0.f) {
-					envOut = 0.f;
-					envState = ENV_OFF;
-				}
-				break;
-		}
+		float envOut = envelope.process(attackRate, decayRate, gate);
 
 		// Calculate 0 to 10V Envelope Output
 		outputs[ENV_OUTPUT].setVoltage(envOut * 10.f);
@@ -116,39 +76,22 @@ struct ADVCA : Module {
 		// --- VCA ---
 		// CV is normalled to ENV_OUTPUT
 		float cvVolts = inputs[CV_INPUT].getNormalVoltage(envOut * 10.f);
-		
+
 		// Apply attenuator (0 to 1) to CV
 		float cvInput = cvVolts * params[CV_ATTEN_PARAM].getValue();
-		
+
 		// Map CV (0-10V) to [0, 1] gain scale
 		float gainNorm = clamp(cvInput / 10.f, 0.f, 1.f);
 
-		// Calculate responses
-		float linGain = gainNorm;
-		// Exponential response curve (x^4 mapping from 0 to 1) for a punchy feel
-		float expGain = gainNorm * gainNorm * gainNorm * gainNorm;
-		// Logarithmic response curve (approx 1/4 power)
-		float logGain = std::pow(gainNorm, 0.25f);
-
 		float responseMix = params[RESPONSE_PARAM].getValue(); // 0 = Exp, 0.5 = Lin, 1 = Log
-		
-		float finalGain;
-		if (responseMix < 0.5f) {
-			// Crossfade Exponential to Linear
-			float mix = responseMix * 2.f;
-			finalGain = crossfade(expGain, linGain, mix);
-		} else {
-			// Crossfade Linear to Logarithmic
-			float mix = (responseMix - 0.5f) * 2.f;
-			finalGain = crossfade(linGain, logGain, mix);
-		}
+		float finalGain   = ataraxic_dsp::VCA::computeGain(gainNorm, responseMix);
 
 		// Apply VCA
-		float audioIn = inputs[IN_INPUT].getVoltage();
+		float audioIn  = inputs[IN_INPUT].getVoltage();
 		float audioOut = audioIn * finalGain;
-		
+
 		outputs[OUT_OUTPUT].setVoltage(audioOut);
-		
+
 		// Set LED brightness to the final gain value
 		lights[LEVEL_LIGHT].setBrightness(finalGain);
 	}
@@ -160,7 +103,7 @@ struct ADVCALabels : Widget {
 	void draw(const DrawArgs& args) override {
 		std::shared_ptr<Font> font = APP->window->uiFont;
 		if (!font) return;
-		
+
 		if (!boldFont) {
 			boldFont = APP->window->loadFont(asset::system("res/fonts/Nunito-Bold.ttf"));
 		}
@@ -179,7 +122,7 @@ struct ADVCALabels : Widget {
 		// Title
 		drawText(30.48f, 28.f, "ADVCA", 14.f, dark, boldFont);
 
-		
+
 		// Envelope Inputs
 		drawText(16.f, 47.f, "TRIG", 8.f, dark);
 		drawText(44.f, 47.f, "GATE", 8.f, dark);
@@ -204,10 +147,10 @@ struct ADVCALabels : Widget {
 struct ADVCAWidget : ModuleWidget {
 	ADVCAWidget(ADVCA* module) {
 		setModule(module);
-		
+
 		// 4HP width
 		box.size = Vec(4 * RACK_GRID_WIDTH, RACK_GRID_HEIGHT);
-		
+
 		setPanel(createPanel(asset::plugin(pluginInstance, "res/ADVCA.svg")));
 
 		addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, 0)));
@@ -225,17 +168,17 @@ struct ADVCAWidget : ModuleWidget {
 		// Top Half: Envelope
 		addInput(createInputCentered<PJ301MPort>(Vec(leftColumn, 60.f), module, ADVCA::TRIG_INPUT));
 		addInput(createInputCentered<PJ301MPort>(Vec(rightColumn, 60.f), module, ADVCA::GATE_INPUT));
-		
+
 		addParam(createParamCentered<RoundBlackKnob>(Vec(centerX, 110.f), module, ADVCA::ATTACK_PARAM));
 		addParam(createParamCentered<RoundBlackKnob>(Vec(centerX, 150.f), module, ADVCA::DECAY_PARAM));
-		
+
 		addOutput(createOutputCentered<PJ301MPort>(Vec(centerX, 215.f), module, ADVCA::ENV_OUTPUT));
 
 		// Bottom Half: VCA
 		addParam(createParamCentered<Trimpot>(Vec(centerX, 255.f), module, ADVCA::RESPONSE_PARAM));
-		
+
 		addChild(createLightCentered<MediumLight<RedLight>>(Vec(centerX, 275.f), module, ADVCA::LEVEL_LIGHT));
-		
+
 		addInput(createInputCentered<PJ301MPort>(Vec(leftColumn, 295.f), module, ADVCA::CV_INPUT));
 		addParam(createParamCentered<Trimpot>(Vec(rightColumn, 295.f), module, ADVCA::CV_ATTEN_PARAM));
 
