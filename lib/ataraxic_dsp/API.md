@@ -375,7 +375,7 @@ Multiply raw generator output by the corresponding constant before sending to a 
 
 ## Oscillator (`oscillator.hpp`)
 
-Phase-accumulator oscillator with four waveform shapes. Sine is computed via a 256-entry LUT with linear interpolation; triangle, saw, and pulse are computed analytically. Output is in `[-1, 1]`.
+Phase-accumulator oscillator with four waveform shapes. Sine is computed via a 128-entry LUT with linear interpolation; triangle, saw, and pulse are computed analytically. Output is in `[-1, 1]`.
 
 ```cpp
 struct Oscillator {
@@ -399,7 +399,7 @@ struct Oscillator {
 
 | Shape | Formula |
 |-------|---------|
-| `SINE` | LUT lookup with linear interpolation, 256-entry table |
+| `SINE` | LUT lookup with linear interpolation, 128-entry table |
 | `TRIANGLE` | `1 - 4 * |phase - 0.5|` — rises from −1 at phase 0 to +1 at phase 0.5, then back to −1 |
 | `SAW` | `2 * phase - 1` — ramps from −1 to +1 per cycle |
 | `PULSE` | `+1` when `phase < pulseWidth`, else `−1`; `pulseWidth = 0.5` gives a square wave |
@@ -415,7 +415,64 @@ float out = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::SINE);
 float pw = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::PULSE, 0.3f);
 ```
 
-RAM budget on Cortex-M: ~4 bytes (phase only). The 256-entry LUT is `static const` — stored once in flash regardless of how many `Oscillator` instances exist.
+RAM budget on Cortex-M: ~4 bytes (phase only). The 128-entry LUT is `static const` in `detail::sine_lut()` — shared between `Oscillator` and `MorphingOscillator`, stored once in flash.
+
+---
+
+## MorphingOscillator (`oscillator.hpp`)
+
+Phase-accumulator oscillator that continuously crossfades between four waveforms. A single `morph` parameter selects and blends adjacent shapes. Output is in `[-1, 1]`.
+
+Waveform order: **sine → triangle → pulse → saw**
+
+```cpp
+struct MorphingOscillator {
+    float phase;   // Current phase in [0, 1) (readable/writable)
+
+    void  reset();
+    void  setPhase(float p);
+    float process(float freqHz, float sampleTime, float morph, float pulseWidth = 0.5f);
+};
+```
+
+| Member | Description |
+|--------|-------------|
+| `reset()` | Resets phase to 0. |
+| `setPhase(p)` | Sets phase directly. `p` is wrapped to `[0, 1)`. |
+| `process(freqHz, sampleTime, morph, pulseWidth)` | Advances phase by `freqHz * sampleTime` and returns the crossfaded output in `[-1, 1]`. |
+
+**`morph` parameter:**
+
+| Value | Result |
+|-------|--------|
+| `0.0` | Pure sine |
+| `1.0` | Pure triangle |
+| `2.0` | Pure pulse |
+| `3.0` | Pure saw |
+| `0.0`–`1.0` | Crossfade sine → triangle |
+| `1.0`–`2.0` | Crossfade triangle → pulse |
+| `2.0`–`3.0` | Crossfade pulse → saw |
+
+Values outside `[0, 3]` are clamped. `pulseWidth` in `(0, 1)` controls the pulse duty cycle (default `0.5`).
+
+**Example:**
+```cpp
+ataraxic_dsp::MorphingOscillator osc;
+
+// In process loop (sampleTime = 1.0f / sampleRate):
+
+// Pure triangle:
+float out = osc.process(440.0f, sampleTime, 1.0f);
+
+// 20% pulse + 80% saw (morph = 2.8):
+float out = osc.process(440.0f, sampleTime, 2.8f);
+
+// Sweep morph from a CV value in [0, 1] mapped to [0, 3]:
+float morphCV = clamp(cv / 10.f, 0.f, 1.f) * 3.0f;
+float out = osc.process(440.0f, sampleTime, morphCV);
+```
+
+RAM budget on Cortex-M: ~4 bytes (phase only). Shares the `detail::sine_lut()` LUT with `Oscillator`.
 
 ---
 
