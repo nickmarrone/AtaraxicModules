@@ -394,6 +394,7 @@ struct Oscillator {
 | `reset()` | Resets phase to 0. |
 | `setPhase(p)` | Sets phase directly. `p` is wrapped to `[0, 1)`. |
 | `process(freqHz, sampleTime, shape, pulseWidth)` | Advances phase by `freqHz * sampleTime` and returns the current output in `[-1, 1]`. `pulseWidth` is only used by the `PULSE` shape and should be in `(0, 1)`. |
+| `processTZ(instFreqHz, sampleTime, shape, pulseWidth)` | Like `process()` but uses a floor-based phase wrap that handles negative `instFreqHz`. Feed the result of `fmThroughZero()` here. |
 
 **Waveform shapes:**
 
@@ -440,6 +441,7 @@ struct MorphingOscillator {
 | `reset()` | Resets phase to 0. |
 | `setPhase(p)` | Sets phase directly. `p` is wrapped to `[0, 1)`. |
 | `process(freqHz, sampleTime, morph, pulseWidth)` | Advances phase by `freqHz * sampleTime` and returns the crossfaded output in `[-1, 1]`. |
+| `processTZ(instFreqHz, sampleTime, morph, pulseWidth)` | Like `process()` but uses a floor-based phase wrap that handles negative `instFreqHz`. Feed the result of `fmThroughZero()` here. |
 
 **`morph` parameter:**
 
@@ -473,6 +475,52 @@ float out = osc.process(440.0f, sampleTime, morphCV);
 ```
 
 RAM budget on Cortex-M: ~4 bytes (phase only). Shares the `detail::sine_lut()` LUT with `Oscillator`.
+
+---
+
+## FM Helpers (`oscillator.hpp`)
+
+Three free functions that compute an instantaneous frequency in Hz for use with `Oscillator` or `MorphingOscillator`. They are stateless and reusable across both oscillator types.
+
+`fmCV` is a caller-normalized value — the library assumes no specific voltage standard. For Eurorack divide the raw voltage by the CV rail range before passing it (e.g. `voltage / 5.0f` for a ±5 V signal).
+
+```cpp
+inline float fmLinear(float baseHz, float fmCV, float depth);
+inline float fmExp(float baseHz, float fmCV, float depth);
+inline float fmThroughZero(float baseHz, float fmCV, float depth);
+```
+
+| Function | Formula | Notes |
+|----------|---------|-------|
+| `fmLinear` | `baseHz + fmCV * depth`, clamped ≥ 0 | `depth` in Hz/unit. Carrier cannot go negative — pass to `process()`. |
+| `fmExp` | `baseHz * 2^(fmCV * depth)` | `depth` in octaves/unit. Preserves pitch intervals at any carrier frequency. Pass to `process()`. |
+| `fmThroughZero` | `baseHz + fmCV * depth`, signed | `depth` in Hz/unit. Result may be negative (phase runs backwards). Pass to `processTZ()`. |
+
+**Example:**
+```cpp
+ataraxic_dsp::Oscillator        osc;
+ataraxic_dsp::MorphingOscillator morphOsc;
+
+const float sampleTime = 1.0f / 48000.0f;
+const float baseHz     = 220.0f;
+const float fmCV       = inputs[FM_INPUT].getVoltage() / 5.0f;  // normalize ±5 V → [-1, 1]
+
+// Linear FM: ±50 Hz deviation, clamped at 0 Hz minimum
+float out1 = osc.process(ataraxic_dsp::fmLinear(baseHz, fmCV, 50.0f),
+                          sampleTime, ataraxic_dsp::Oscillator::SAW);
+
+// Exponential FM: ±1 octave at fmCV = ±1
+float out2 = osc.process(ataraxic_dsp::fmExp(baseHz, fmCV, 1.0f),
+                          sampleTime, ataraxic_dsp::Oscillator::SINE);
+
+// Through-zero FM: phase reverses when instFreq < 0
+float out3 = osc.processTZ(ataraxic_dsp::fmThroughZero(baseHz, fmCV, 200.0f),
+                             sampleTime, ataraxic_dsp::Oscillator::SINE);
+
+// MorphingOscillator with through-zero FM (20% pulse + 80% saw blend)
+float out4 = morphOsc.processTZ(ataraxic_dsp::fmThroughZero(baseHz, fmCV, 300.0f),
+                                  sampleTime, 2.8f);
+```
 
 ---
 

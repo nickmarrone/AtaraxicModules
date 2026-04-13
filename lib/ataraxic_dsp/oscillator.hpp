@@ -55,7 +55,41 @@ inline float osc_shape(float ph, int shapeIdx, float pulseWidth) {
     }
 }
 
+// Through-zero-safe phase wrap. Handles positive and negative phase increments.
+// Equivalent to p - floor(p); always returns [0, 1).
+inline float wrapPhase(float p) {
+    return p - std::floor(p);
+}
+
 } // namespace detail
+
+// ---------------------------------------------------------------------------
+// FM frequency helpers
+//
+// Compute an instantaneous frequency in Hz to pass to process() or processTZ().
+// fmCV is caller-normalized — the library assumes no specific voltage standard.
+// Example: divide Eurorack ±5 V by 5.0f to get fmCV in [-1, 1].
+// ---------------------------------------------------------------------------
+
+// Linear FM. Instantaneous frequency is clamped to 0 Hz minimum (no backward phase).
+// depth: Hz per unit of fmCV (e.g. 100.0f → ±100 Hz at fmCV = ±1).
+inline float fmLinear(float baseHz, float fmCV, float depth) {
+    float f = baseHz + fmCV * depth;
+    return f < 0.0f ? 0.0f : f;
+}
+
+// Exponential FM. 1V/oct style — pitch intervals are preserved regardless of carrier pitch.
+// depth: octaves per unit of fmCV (e.g. 1.0f → ±1 octave at fmCV = ±1).
+inline float fmExp(float baseHz, float fmCV, float depth) {
+    return baseHz * std::pow(2.0f, fmCV * depth);
+}
+
+// Through-zero FM. Allows negative instantaneous frequency — phase runs backwards.
+// Pass the result to processTZ(), not process().
+// depth: Hz per unit of fmCV.
+inline float fmThroughZero(float baseHz, float fmCV, float depth) {
+    return baseHz + fmCV * depth;
+}
 
 // ---------------------------------------------------------------------------
 // Oscillator
@@ -86,6 +120,15 @@ struct Oscillator {
     float process(float freqHz, float sampleTime, Shape shape, float pulseWidth = 0.5f) {
         phase += freqHz * sampleTime;
         if (phase >= 1.0f) phase -= 1.0f;
+        return _output(phase, shape, pulseWidth);
+    }
+
+    // Process one sample with through-zero FM.
+    //   instFreqHz: signed instantaneous frequency from fmThroughZero(). May be negative.
+    //               Negative Hz causes the phase accumulator to run backwards.
+    float processTZ(float instFreqHz, float sampleTime, Shape shape, float pulseWidth = 0.5f) {
+        phase += instFreqHz * sampleTime;
+        phase  = detail::wrapPhase(phase);
         return _output(phase, shape, pulseWidth);
     }
 
@@ -134,15 +177,26 @@ struct MorphingOscillator {
     float process(float freqHz, float sampleTime, float morph, float pulseWidth = 0.5f) {
         phase += freqHz * sampleTime;
         if (phase >= 1.0f) phase -= 1.0f;
+        return _morphOutput(phase, morph, pulseWidth);
+    }
 
-        if (morph <= 0.0f) return detail::osc_shape(phase, 0, pulseWidth);
-        if (morph >= 3.0f) return detail::osc_shape(phase, 3, pulseWidth);
+    // Process one sample with through-zero FM.
+    //   instFreqHz: signed instantaneous frequency from fmThroughZero(). May be negative.
+    //               Negative Hz causes the phase accumulator to run backwards.
+    float processTZ(float instFreqHz, float sampleTime, float morph, float pulseWidth = 0.5f) {
+        phase += instFreqHz * sampleTime;
+        phase  = detail::wrapPhase(phase);
+        return _morphOutput(phase, morph, pulseWidth);
+    }
 
+private:
+    static float _morphOutput(float ph, float morph, float pulseWidth) {
+        if (morph <= 0.0f) return detail::osc_shape(ph, 0, pulseWidth);
+        if (morph >= 3.0f) return detail::osc_shape(ph, 3, pulseWidth);
         int   base = (int)morph;
         float frac = morph - (float)base;
-
-        float a = detail::osc_shape(phase, base,     pulseWidth);
-        float b = detail::osc_shape(phase, base + 1, pulseWidth);
+        float a    = detail::osc_shape(ph, base,     pulseWidth);
+        float b    = detail::osc_shape(ph, base + 1, pulseWidth);
         return a + frac * (b - a);
     }
 };
