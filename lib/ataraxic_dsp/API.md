@@ -43,23 +43,33 @@ static float picoRng(void*) {
 
 Schmitt trigger with hysteresis. Returns `true` on a LOW→HIGH transition (rising edge). Direct port of `rack::dsp::SchmittTrigger`.
 
+Set `lowThreshold` and `highThreshold` once at init if non-default values are needed. Default thresholds (0.0 / 1.0) suit a 0–1 V gate; use e.g. (0.1, 2.0) for Eurorack 5 V gates.
+
 ```cpp
 struct SchmittTrigger {
+    float lowThreshold;   // default 0.0f
+    float highThreshold;  // default 1.0f
+
     void reset();
-    bool process(float in, float lowThreshold = 0.0f, float highThreshold = 1.0f);
+    bool process(float in);
     bool isHigh() const;
 };
 ```
 
 | Member | Description |
 |--------|-------------|
+| `lowThreshold` | Input level at or below which the trigger transitions HIGH→LOW. |
+| `highThreshold` | Input level at or above which the trigger transitions LOW→HIGH. |
 | `reset()` | Returns to UNINITIALIZED state. The next `process()` call will set the initial state without firing a rising-edge event. |
-| `process(in, low, high)` | Feed the current input voltage. Returns `true` only on the LOW→HIGH transition. Defaults match a 0–1 V gate signal; use `(0.1f, 2.0f)` for Eurorack 5 V gates. |
+| `process(in)` | Feed the current input voltage. Returns `true` only on the LOW→HIGH transition. |
 | `isHigh()` | Returns `true` if currently in the HIGH state. |
 
 **Example:**
 ```cpp
 ataraxic_dsp::SchmittTrigger trig;
+// For Eurorack 5V gates:
+// trig.lowThreshold  = 0.1f;
+// trig.highThreshold = 2.0f;
 
 // In process loop:
 if (trig.process(gateVoltage)) {
