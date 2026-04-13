@@ -43,15 +43,50 @@ inline float osc_sine(float ph) {
     return (i & 128) ? -val : val;
 }
 
-// Evaluate a single waveform shape at phase ph.
+// Evaluate a single waveform shape at phase ph with a timbre parameter.
 // shapeIdx: 0=SINE, 1=TRIANGLE, 2=PULSE, 3=SAW  (morph ordering)
-inline float osc_shape(float ph, int shapeIdx, float pulseWidth) {
+// timbre in [0, 1]; 0.5 is the neutral/default for all shapes.
+//
+//   SINE  (0): Phase distortion (Casio CZ style). Warps the phase before the LUT
+//              lookup by splitting the cycle at `timbre`. timbre=0.5 → pure sine;
+//              toward 0 or 1 → asymmetric waveform with added harmonics.
+//
+//   TRIANGLE (1): Variable slope. Controls the rise/fall breakpoint.
+//              timbre=0.5 → symmetric triangle; toward 0 → ramp-down shape
+//              (fast fall, slow rise); toward 1 → ramp-up/saw shape.
+//
+//   PULSE (2): Pulse width. timbre = duty cycle; 0.5 → square wave.
+//
+//   SAW  (3): Quadratic phase bend. timbre=0.5 → pure saw; toward 0 → concave
+//             ramp (slow start, fast finish — darker); toward 1 → convex ramp
+//             (fast start, slow finish — brighter).
+inline float osc_shape(float ph, int shapeIdx, float timbre) {
     switch (shapeIdx) {
-        case 0: return osc_sine(ph);
-        case 1: return 1.0f - 4.0f * std::fabs(ph - 0.5f);
-        case 2: return (ph < pulseWidth) ? 1.0f : -1.0f;
-        case 3: return 2.0f * ph - 1.0f;
-        default: return 0.0f;
+        case 0: {
+            // Phase distortion: warp phase before LUT lookup.
+            // Clamp timbre away from 0/1 to avoid division by zero.
+            float t = timbre < 0.001f ? 0.001f : (timbre > 0.999f ? 0.999f : timbre);
+            float pd = (ph < t) ? (0.5f * ph / t)
+                                : (0.5f + 0.5f * (ph - t) / (1.0f - t));
+            return osc_sine(pd);
+        }
+        case 1: {
+            // Variable slope triangle.
+            float t = timbre < 0.001f ? 0.001f : (timbre > 0.999f ? 0.999f : timbre);
+            return (ph < t) ? (-1.0f + 2.0f * (ph / t))
+                            : ( 1.0f - 2.0f * ((ph - t) / (1.0f - t)));
+        }
+        case 2:
+            // Pulse width modulation.
+            return (ph < timbre) ? 1.0f : -1.0f;
+        case 3: {
+            // Quadratic phase bend: k=0 (timbre=0.5) → pure saw.
+            float k    = 2.0f * (timbre - 0.5f);         // [-1, 1]
+            float bent = ph + k * ph * (1.0f - ph);       // [0, 1]
+            return 2.0f * bent - 1.0f;
+        }
+        default:
+            return 0.0f;
     }
 }
 
@@ -116,29 +151,32 @@ struct Oscillator {
     //   freqHz:     oscillator frequency in Hz
     //   sampleTime: 1.0f / sampleRate
     //   shape:      SINE, TRIANGLE, SAW, or PULSE
-    //   pulseWidth: duty cycle for PULSE shape, in (0, 1); default 0.5
-    float process(float freqHz, float sampleTime, Shape shape, float pulseWidth = 0.5f) {
+    //   timbre:     shape-specific timbral control in [0, 1]; 0.5 is neutral for all shapes
+    float process(float freqHz, float sampleTime, Shape shape, float timbre = 0.5f) {
         phase += freqHz * sampleTime;
         if (phase >= 1.0f) phase -= 1.0f;
-        return _output(phase, shape, pulseWidth);
+        return _output(phase, shape, timbre);
     }
 
     // Process one sample with through-zero FM.
     //   instFreqHz: signed instantaneous frequency from fmThroughZero(). May be negative.
     //               Negative Hz causes the phase accumulator to run backwards.
-    float processTZ(float instFreqHz, float sampleTime, Shape shape, float pulseWidth = 0.5f) {
+    float processTZ(float instFreqHz, float sampleTime, Shape shape, float timbre = 0.5f) {
         phase += instFreqHz * sampleTime;
         phase  = detail::wrapPhase(phase);
-        return _output(phase, shape, pulseWidth);
+        return _output(phase, shape, timbre);
     }
 
 private:
-    static float _output(float ph, Shape shape, float pulseWidth) {
+    // Map Oscillator::Shape enum to detail::osc_shape indices.
+    // Oscillator enum: SINE=0, TRIANGLE=1, SAW=2, PULSE=3
+    // osc_shape index: SINE=0, TRIANGLE=1, PULSE=2, SAW=3  (morph ordering)
+    static float _output(float ph, Shape shape, float timbre) {
         switch (shape) {
-            case SINE:     return detail::osc_sine(ph);
-            case TRIANGLE: return 1.0f - 4.0f * std::fabs(ph - 0.5f);
-            case SAW:      return 2.0f * ph - 1.0f;
-            case PULSE:    return (ph < pulseWidth) ? 1.0f : -1.0f;
+            case SINE:     return detail::osc_shape(ph, 0, timbre);
+            case TRIANGLE: return detail::osc_shape(ph, 1, timbre);
+            case SAW:      return detail::osc_shape(ph, 3, timbre);
+            case PULSE:    return detail::osc_shape(ph, 2, timbre);
             default:       return 0.0f;
         }
     }
@@ -173,30 +211,30 @@ struct MorphingOscillator {
     //   freqHz:     oscillator frequency in Hz
     //   sampleTime: 1.0f / sampleRate
     //   morph:      waveform position in [0, 3]; clamped at the boundaries
-    //   pulseWidth: duty cycle for the pulse shape, in (0, 1); default 0.5
-    float process(float freqHz, float sampleTime, float morph, float pulseWidth = 0.5f) {
+    //   timbre:     shape-specific timbral control in [0, 1]; 0.5 is neutral for all shapes
+    float process(float freqHz, float sampleTime, float morph, float timbre = 0.5f) {
         phase += freqHz * sampleTime;
         if (phase >= 1.0f) phase -= 1.0f;
-        return _morphOutput(phase, morph, pulseWidth);
+        return _morphOutput(phase, morph, timbre);
     }
 
     // Process one sample with through-zero FM.
     //   instFreqHz: signed instantaneous frequency from fmThroughZero(). May be negative.
     //               Negative Hz causes the phase accumulator to run backwards.
-    float processTZ(float instFreqHz, float sampleTime, float morph, float pulseWidth = 0.5f) {
+    float processTZ(float instFreqHz, float sampleTime, float morph, float timbre = 0.5f) {
         phase += instFreqHz * sampleTime;
         phase  = detail::wrapPhase(phase);
-        return _morphOutput(phase, morph, pulseWidth);
+        return _morphOutput(phase, morph, timbre);
     }
 
 private:
-    static float _morphOutput(float ph, float morph, float pulseWidth) {
-        if (morph <= 0.0f) return detail::osc_shape(ph, 0, pulseWidth);
-        if (morph >= 3.0f) return detail::osc_shape(ph, 3, pulseWidth);
+    static float _morphOutput(float ph, float morph, float timbre) {
+        if (morph <= 0.0f) return detail::osc_shape(ph, 0, timbre);
+        if (morph >= 3.0f) return detail::osc_shape(ph, 3, timbre);
         int   base = (int)morph;
         float frac = morph - (float)base;
-        float a    = detail::osc_shape(ph, base,     pulseWidth);
-        float b    = detail::osc_shape(ph, base + 1, pulseWidth);
+        float a    = detail::osc_shape(ph, base,     timbre);
+        float b    = detail::osc_shape(ph, base + 1, timbre);
         return a + frac * (b - a);
     }
 };

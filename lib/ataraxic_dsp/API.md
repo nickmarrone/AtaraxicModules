@@ -385,7 +385,8 @@ struct Oscillator {
 
     void  reset();
     void  setPhase(float p);
-    float process(float freqHz, float sampleTime, Shape shape, float pulseWidth = 0.5f);
+    float process(float freqHz, float sampleTime, Shape shape, float timbre = 0.5f);
+    float processTZ(float instFreqHz, float sampleTime, Shape shape, float timbre = 0.5f);
 };
 ```
 
@@ -393,17 +394,17 @@ struct Oscillator {
 |--------|-------------|
 | `reset()` | Resets phase to 0. |
 | `setPhase(p)` | Sets phase directly. `p` is wrapped to `[0, 1)`. |
-| `process(freqHz, sampleTime, shape, pulseWidth)` | Advances phase by `freqHz * sampleTime` and returns the current output in `[-1, 1]`. `pulseWidth` is only used by the `PULSE` shape and should be in `(0, 1)`. |
-| `processTZ(instFreqHz, sampleTime, shape, pulseWidth)` | Like `process()` but uses a floor-based phase wrap that handles negative `instFreqHz`. Feed the result of `fmThroughZero()` here. |
+| `process(freqHz, sampleTime, shape, timbre)` | Advances phase by `freqHz * sampleTime` and returns the output in `[-1, 1]`. `timbre` in `[0, 1]` shapes the waveform; `0.5` is neutral for all shapes. |
+| `processTZ(instFreqHz, sampleTime, shape, timbre)` | Like `process()` but uses a floor-based phase wrap that handles negative `instFreqHz`. Feed the result of `fmThroughZero()` here. |
 
-**Waveform shapes:**
+**Waveform shapes and timbre effect:**
 
-| Shape | Formula |
-|-------|---------|
-| `SINE` | LUT lookup with linear interpolation, 128-entry table |
-| `TRIANGLE` | `1 - 4 * |phase - 0.5|` — rises from −1 at phase 0 to +1 at phase 0.5, then back to −1 |
-| `SAW` | `2 * phase - 1` — ramps from −1 to +1 per cycle |
-| `PULSE` | `+1` when `phase < pulseWidth`, else `−1`; `pulseWidth = 0.5` gives a square wave |
+| Shape | `timbre = 0` | `timbre = 0.5` (neutral) | `timbre = 1` |
+|-------|-------------|--------------------------|-------------|
+| `SINE` | Phase distorted early — asymmetric harmonics | Pure sine | Phase distorted late — asymmetric harmonics |
+| `TRIANGLE` | Ramp-down shape (fast fall, slow rise) | Symmetric triangle | Ramp-up/saw shape (slow fall, fast rise) |
+| `SAW` | Concave ramp — slow start, fast finish (darker) | Pure sawtooth | Convex ramp — fast start, slow finish (brighter) |
+| `PULSE` | Narrow negative pulse | Square wave | Narrow positive pulse |
 
 **Example:**
 ```cpp
@@ -411,6 +412,9 @@ ataraxic_dsp::Oscillator osc;
 
 // In process loop (sampleTime = 1.0f / sampleRate):
 float out = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::SINE);
+
+// Brighter saw (convex phase bend):
+float saw = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::SAW, 0.8f);
 
 // Pulse wave with 30% duty cycle:
 float pw = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::PULSE, 0.3f);
@@ -432,7 +436,8 @@ struct MorphingOscillator {
 
     void  reset();
     void  setPhase(float p);
-    float process(float freqHz, float sampleTime, float morph, float pulseWidth = 0.5f);
+    float process(float freqHz, float sampleTime, float morph, float timbre = 0.5f);
+    float processTZ(float instFreqHz, float sampleTime, float morph, float timbre = 0.5f);
 };
 ```
 
@@ -440,8 +445,8 @@ struct MorphingOscillator {
 |--------|-------------|
 | `reset()` | Resets phase to 0. |
 | `setPhase(p)` | Sets phase directly. `p` is wrapped to `[0, 1)`. |
-| `process(freqHz, sampleTime, morph, pulseWidth)` | Advances phase by `freqHz * sampleTime` and returns the crossfaded output in `[-1, 1]`. |
-| `processTZ(instFreqHz, sampleTime, morph, pulseWidth)` | Like `process()` but uses a floor-based phase wrap that handles negative `instFreqHz`. Feed the result of `fmThroughZero()` here. |
+| `process(freqHz, sampleTime, morph, timbre)` | Advances phase by `freqHz * sampleTime` and returns the crossfaded output in `[-1, 1]`. `timbre` in `[0, 1]` shapes the waveform(s); `0.5` is neutral for all shapes. |
+| `processTZ(instFreqHz, sampleTime, morph, timbre)` | Like `process()` but uses a floor-based phase wrap that handles negative `instFreqHz`. Feed the result of `fmThroughZero()` here. |
 
 **`morph` parameter:**
 
@@ -455,7 +460,7 @@ struct MorphingOscillator {
 | `1.0`–`2.0` | Crossfade triangle → pulse |
 | `2.0`–`3.0` | Crossfade pulse → saw |
 
-Values outside `[0, 3]` are clamped. `pulseWidth` in `(0, 1)` controls the pulse duty cycle (default `0.5`).
+Values outside `[0, 3]` are clamped. `timbre` in `[0, 1]` applies to whichever shape(s) are active; see the `Oscillator` timbre table above for per-shape behavior (default `0.5`).
 
 **Example:**
 ```cpp
@@ -463,11 +468,11 @@ ataraxic_dsp::MorphingOscillator osc;
 
 // In process loop (sampleTime = 1.0f / sampleRate):
 
-// Pure triangle:
+// Pure triangle (neutral timbre):
 float out = osc.process(440.0f, sampleTime, 1.0f);
 
-// 20% pulse + 80% saw (morph = 2.8):
-float out = osc.process(440.0f, sampleTime, 2.8f);
+// 20% pulse + 80% saw (morph = 2.8), brighter timbre:
+float out = osc.process(440.0f, sampleTime, 2.8f, 0.75f);
 
 // Sweep morph from a CV value in [0, 1] mapped to [0, 3]:
 float morphCV = clamp(cv / 10.f, 0.f, 1.f) * 3.0f;
