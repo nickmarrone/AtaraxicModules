@@ -121,6 +121,76 @@ struct EightBitNoise {
 };
 
 // ---------------------------------------------------------------------------
+// BlueFilter
+// First-order differencer applied to pink noise, producing +3 dB/octave slope.
+// Feed it the pink noise sample each tick; it stores the previous value.
+// ---------------------------------------------------------------------------
+struct BlueFilter {
+    float _lastPink;
+
+    BlueFilter() : _lastPink(0) {}
+
+    void reset() { _lastPink = 0.0f; }
+
+    // Feed a pink noise sample, returns a blue noise sample (gain 10×).
+    float process(float pink) {
+        float blue = (pink - _lastPink) * 10.0f;
+        _lastPink  = pink;
+        return blue;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// VioletFilter
+// First-order differencer applied to white noise, producing +6 dB/octave slope.
+// Feed it the white noise sample each tick; it stores the previous value.
+// ---------------------------------------------------------------------------
+struct VioletFilter {
+    float _lastWhite;
+
+    VioletFilter() : _lastWhite(0) {}
+
+    void reset() { _lastWhite = 0.0f; }
+
+    // Feed a white noise sample, returns a violet noise sample (gain 0.707×).
+    float process(float white) {
+        float violet = (white - _lastWhite) * 0.707f;
+        _lastWhite   = white;
+        return violet;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// VelvetNoise
+// Sparse random impulses (+1 or -1) at a rate swept by the character parameter.
+// Uses an injected RNG for probability checks; the sign is determined by the
+// caller-supplied white noise sample so it can share the per-sample cache.
+// ---------------------------------------------------------------------------
+struct VelvetNoise {
+    RngFn rng;
+    void* rng_ctx;
+
+    VelvetNoise() : rng(0), rng_ctx(0) {}
+
+    void init(RngFn rngFn, void* ctx = 0) {
+        rng     = rngFn;
+        rng_ctx = ctx;
+    }
+
+    // character in [0,1] sweeps impulse rate from 10 Hz to 10 kHz.
+    // white: current white noise sample used for sign (+1/-1).
+    // sampleTime = 1 / sampleRate.
+    float process(float character, float sampleTime, float white) {
+        float rate = std::pow(10.0f, 1.0f + 3.0f * character);
+        float p    = rate * sampleTime;
+        if (rng(rng_ctx) < p) {
+            return (white > 0.0f) ? 1.0f : -1.0f;
+        }
+        return 0.0f;
+    }
+};
+
+// ---------------------------------------------------------------------------
 // UrusaiDsp — Full 7-output noise engine
 // Combines all noise generators with per-sample caching (white and pink are
 // computed once per sample and reused by derived outputs) and one-pole filter
@@ -135,6 +205,9 @@ struct EightBitNoise {
 struct UrusaiDsp {
     WhiteNoise    whiteGen;
     PinkFilter    pinkFilter;
+    BlueFilter    blueFilter;
+    VioletFilter  violetFilter;
+    VelvetNoise   velvetGen;
     CmosNoise     cmos;
     EightBitNoise eightBit;
 
@@ -145,8 +218,7 @@ struct UrusaiDsp {
     float violetLp, violetHpLp;
 
     // Per-sample cache
-    float _white,    _pink;
-    float _lastWhite, _lastPink;
+    float _white, _pink;
     bool  _whiteReady, _pinkReady;
 
     UrusaiDsp() :
@@ -155,18 +227,20 @@ struct UrusaiDsp {
         blueLp(0),  blueHpLp(0),
         violetLp(0), violetHpLp(0),
         _white(0), _pink(0),
-        _lastWhite(0), _lastPink(0),
         _whiteReady(false), _pinkReady(false)
     {}
 
     void init(RngFn rngFn, void* ctx = 0) {
         whiteGen.init(rngFn, ctx);
+        velvetGen.init(rngFn, ctx);
         pinkFilter.reset();
+        blueFilter.reset();
+        violetFilter.reset();
         cmos.reset();
         eightBit.reset();
         whiteLp = whiteHpLp = pinkLp = pinkHpLp = 0.0f;
         blueLp  = blueHpLp  = violetLp = violetHpLp = 0.0f;
-        _white = _pink = _lastWhite = _lastPink = 0.0f;
+        _white = _pink = 0.0f;
         _whiteReady = _pinkReady = false;
     }
 
@@ -196,18 +270,12 @@ struct UrusaiDsp {
 
     // Blue noise: first-order difference of pink, gain 10x (+3 dB/oct slope).
     float getBlue() {
-        float p    = getPink();
-        float blue = (p - _lastPink) * 10.0f;
-        _lastPink  = p;
-        return blue;
+        return blueFilter.process(getPink());
     }
 
     // Violet noise: first-order difference of white, gain 0.707x (+6 dB/oct slope).
     float getViolet() {
-        float w      = getWhite();
-        float violet = (w - _lastWhite) * 0.707f;
-        _lastWhite   = w;
-        return violet;
+        return violetFilter.process(getWhite());
     }
 
     // Velvet noise: sparse random impulses.
@@ -215,12 +283,7 @@ struct UrusaiDsp {
     // Uses a separate RNG draw for the probability check; uses the cached white
     // sample for the sign (matching the original Urusai behavior exactly).
     float getVelvet(float character, float sampleTime) {
-        float rate = std::pow(10.0f, 1.0f + 3.0f * character);
-        float p    = rate * sampleTime;
-        if (whiteGen.uniform() < p) {
-            return (getWhite() > 0.0f) ? 1.0f : -1.0f;
-        }
-        return 0.0f;
+        return velvetGen.process(character, sampleTime, getWhite());
     }
 
     // CMOS (MM5837-style) noise.

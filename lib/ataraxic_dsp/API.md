@@ -257,6 +257,47 @@ struct EightBitNoise {
 
 ---
 
+### BlueFilter
+
+First-order differencer applied to pink noise, producing a +3 dB/octave spectral slope. Feed it one pink noise sample per tick.
+
+```cpp
+struct BlueFilter {
+    void  reset();
+    float process(float pink);   // feed pink noise, returns blue noise (gain 10×)
+};
+```
+
+---
+
+### VioletFilter
+
+First-order differencer applied to white noise, producing a +6 dB/octave spectral slope. Feed it one white noise sample per tick.
+
+```cpp
+struct VioletFilter {
+    void  reset();
+    float process(float white);  // feed white noise, returns violet noise (gain 0.707×)
+};
+```
+
+---
+
+### VelvetNoise
+
+Sparse random impulses (+1 or −1) at a rate controlled by `character`. Requires an injected RNG for the probability check; the sign is determined by the caller-supplied white noise sample so the per-sample white cache can be shared.
+
+```cpp
+struct VelvetNoise {
+    void  init(RngFn rngFn, void* ctx = 0);
+    float process(float character, float sampleTime, float white);
+};
+```
+
+`character` in `[0, 1]` sweeps impulse rate from 10 Hz to 10 kHz. `white` is the current white noise sample (used for sign only).
+
+---
+
 ### UrusaiDsp
 
 Full 7-output noise engine combining all generators. Handles per-sample caching so white and pink noise are computed only once per tick regardless of how many derived outputs consume them. Also holds one-pole filter state for tone shaping.
