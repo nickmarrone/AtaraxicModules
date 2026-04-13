@@ -15,6 +15,7 @@
 
 #include "schmitt_trigger.hpp"
 #include "envelope.hpp"
+#include "pot.hpp"
 #include "vca.hpp"
 #include "onepole.hpp"
 #include "noise.hpp"

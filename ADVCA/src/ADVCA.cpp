@@ -26,7 +26,10 @@ struct ADVCA : Module {
 		LIGHTS_LEN
 	};
 
-	ataraxic_dsp::EnvelopeADAR envelope;
+	ataraxic_dsp::EnvelopeAD envelopeAD;
+	ataraxic_dsp::EnvelopeAR envelopeAR;
+	bool usingAR = false;
+	ataraxic_dsp::VCA vca;
 	ataraxic_dsp::SchmittTrigger trigTrigger;
 	ataraxic_dsp::SchmittTrigger gateSchmittTrigger;
 
@@ -56,24 +59,32 @@ struct ADVCA : Module {
 		// Time scaling: Map 0-1 param to 1ms -> 10s using a cubic curve.
 		// A cubic curve (x^3) gives a more natural "log pot" feel than the pure exponential formula,
 		// spreading out the mid-range times more evenly.
-		float attackTime = ataraxic_dsp::advcaScaleTime(attackParam, 0.001f, 2.0f);
-		float decayTime  = ataraxic_dsp::advcaScaleTime(decayParam,  0.001f, 10.0f);
+		float attackTime = ataraxic_dsp::cubicPotScale(attackParam, 0.001f, 2.0f);
+		float decayTime  = ataraxic_dsp::cubicPotScale(decayParam,  0.001f, 10.0f);
 
-		float attackRate = 1.f / (attackTime * args.sampleRate);
-		float decayRate  = 1.f / (decayTime  * args.sampleRate);
+		envelopeAD.attackRate  = 1.f / (attackTime * args.sampleRate);
+		envelopeAD.decayRate   = 1.f / (decayTime  * args.sampleRate);
+		envelopeAR.attackRate  = envelopeAD.attackRate;
+		envelopeAR.releaseRate = envelopeAD.decayRate;
 
 		if (trigTrigger.process(inputs[TRIG_INPUT].getVoltage())) {
-			envelope.triggerAD();
+			envelopeAD.trigger();
+			usingAR = false;
 		} else if (gateSchmittTrigger.process(inputs[GATE_INPUT].getVoltage())) {
-			envelope.triggerAR();
+			envelopeAR.trigger();
+			usingAR = true;
 		}
 
-		float envOut = envelope.process(attackRate, decayRate, gate);
+		float envOut = usingAR
+			? envelopeAR.process(gate)
+			: envelopeAD.process();
 
 		// Calculate 0 to 10V Envelope Output
 		outputs[ENV_OUTPUT].setVoltage(envOut * 10.f);
 
 		// --- VCA ---
+		vca.setResponse(params[RESPONSE_PARAM].getValue());
+
 		// CV is normalled to ENV_OUTPUT
 		float cvVolts = inputs[CV_INPUT].getNormalVoltage(envOut * 10.f);
 
@@ -81,10 +92,8 @@ struct ADVCA : Module {
 		float cvInput = cvVolts * params[CV_ATTEN_PARAM].getValue();
 
 		// Map CV (0-10V) to [0, 1] gain scale
-		float gainNorm = clamp(cvInput / 10.f, 0.f, 1.f);
-
-		float responseMix = params[RESPONSE_PARAM].getValue(); // 0 = Exp, 0.5 = Lin, 1 = Log
-		float finalGain   = ataraxic_dsp::VCA::computeGain(gainNorm, responseMix);
+		float gainNorm  = clamp(cvInput / 10.f, 0.f, 1.f);
+		float finalGain = vca.computeGain(gainNorm);
 
 		// Apply VCA
 		float audioIn  = inputs[IN_INPUT].getVoltage();

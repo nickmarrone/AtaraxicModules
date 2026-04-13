@@ -43,23 +43,33 @@ static float picoRng(void*) {
 
 Schmitt trigger with hysteresis. Returns `true` on a LOW→HIGH transition (rising edge). Direct port of `rack::dsp::SchmittTrigger`.
 
+Set `lowThreshold` and `highThreshold` once at init if non-default values are needed. Default thresholds (0.0 / 1.0) suit a 0–1 V gate; use e.g. (0.1, 2.0) for Eurorack 5 V gates.
+
 ```cpp
 struct SchmittTrigger {
+    float lowThreshold;   // default 0.0f
+    float highThreshold;  // default 1.0f
+
     void reset();
-    bool process(float in, float lowThreshold = 0.0f, float highThreshold = 1.0f);
+    bool process(float in);
     bool isHigh() const;
 };
 ```
 
 | Member | Description |
 |--------|-------------|
+| `lowThreshold` | Input level at or below which the trigger transitions HIGH→LOW. |
+| `highThreshold` | Input level at or above which the trigger transitions LOW→HIGH. |
 | `reset()` | Returns to UNINITIALIZED state. The next `process()` call will set the initial state without firing a rising-edge event. |
-| `process(in, low, high)` | Feed the current input voltage. Returns `true` only on the LOW→HIGH transition. Defaults match a 0–1 V gate signal; use `(0.1f, 2.0f)` for Eurorack 5 V gates. |
+| `process(in)` | Feed the current input voltage. Returns `true` only on the LOW→HIGH transition. |
 | `isHigh()` | Returns `true` if currently in the HIGH state. |
 
 **Example:**
 ```cpp
 ataraxic_dsp::SchmittTrigger trig;
+// For Eurorack 5V gates:
+// trig.lowThreshold  = 0.1f;
+// trig.highThreshold = 2.0f;
 
 // In process loop:
 if (trig.process(gateVoltage)) {
@@ -69,69 +79,110 @@ if (trig.process(gateVoltage)) {
 
 ---
 
-## EnvelopeADAR (`envelope.hpp`)
+## EnvelopeAD (`envelope.hpp`)
 
-Linear-ramp AD/AR envelope generator. Supports both one-shot (Attack-Decay) and gated (Attack-Release) modes.
+One-shot linear-ramp Attack-Decay envelope. Sequence: ATTACK → DECAY → OFF.
 
 ```cpp
-struct EnvelopeADAR {
-    float output;   // current output, 0.0 to 1.0 (read-only)
+struct EnvelopeAD {
+    float output;      // current output, 0.0 to 1.0 (read-only)
+    float attackRate;  // set to 1.0f / (attackTimeSecs * sampleRate)
+    float decayRate;   // set to 1.0f / (decayTimeSecs  * sampleRate)
 
     void  reset();
-    void  triggerAD();
-    void  triggerAR();
-    float process(float attackRate, float decayRate, bool gate);
+    void  trigger();
+    float process();
 };
 ```
 
 | Member | Description |
 |--------|-------------|
 | `output` | Current envelope value in `[0, 1]`. Readable at any time; also returned by `process()`. |
-| `reset()` | Forces envelope to OFF state with output 0. |
-| `triggerAD()` | Starts a one-shot AD envelope. Ignores gate level. Sequence: ATTACK → DECAY_RELEASE → OFF. |
-| `triggerAR()` | Starts a gated AR envelope. Call on the rising edge of a gate. Sequence: ATTACK → SUSTAIN (while gate is high) → DECAY_RELEASE → OFF. |
-| `process(attackRate, decayRate, gate)` | Advances the envelope by one sample. Returns the new output value. |
-
-**Rate calculation:**
-```cpp
-float attackRate = 1.0f / (attackTimeSecs * sampleRate);
-float decayRate  = 1.0f / (decayTimeSecs  * sampleRate);
-```
+| `attackRate` | Attack increment per sample. Update each tick if the time is CV-modulated. |
+| `decayRate` | Decay decrement per sample. Update each tick if the time is CV-modulated. |
+| `reset()` | Forces envelope to OFF state with output 0. Does not clear rates. |
+| `trigger()` | Starts the attack phase. |
+| `process()` | Advances the envelope by one sample. Returns the new output value. |
 
 **Example:**
 ```cpp
-ataraxic_dsp::EnvelopeADAR env;
+ataraxic_dsp::EnvelopeAD env;
 ataraxic_dsp::SchmittTrigger trig;
 
 // In process loop:
-if (trig.process(trigInput))
-    env.triggerAD();
+env.attackRate = 1.0f / (attackTimeSecs * sampleRate);
+env.decayRate  = 1.0f / (decayTimeSecs  * sampleRate);
 
-float out = env.process(attackRate, decayRate, /*gate=*/false);
+if (trig.process(trigInput))
+    env.trigger();
+
+float out = env.process();
 // out is 0.0–1.0; scale to voltage: out * 10.f
 ```
 
 ---
 
-## advcaScaleTime (`envelope.hpp`)
+## EnvelopeAR (`envelope.hpp`)
 
-Cubic "log-pot" time scaling. Maps a knob parameter in `[0, 1]` to a time in seconds using an x³ curve. Compared to a linear mapping, this spreads short times out more finely while compressing the upper range — similar to a logarithmic potentiometer.
+Gated linear-ramp Attack-Release envelope with sustain. Sequence: ATTACK → SUSTAIN (while gate held) → RELEASE → OFF.
 
 ```cpp
-inline float advcaScaleTime(float param, float baseTime, float maxTime);
+struct EnvelopeAR {
+    float output;       // current output, 0.0 to 1.0 (read-only)
+    float attackRate;   // set to 1.0f / (attackTimeSecs  * sampleRate)
+    float releaseRate;  // set to 1.0f / (releaseTimeSecs * sampleRate)
+
+    void  reset();
+    void  trigger();
+    float process(bool gate);
+};
+```
+
+| Member | Description |
+|--------|-------------|
+| `output` | Current envelope value in `[0, 1]`. Readable at any time; also returned by `process()`. |
+| `attackRate` | Attack increment per sample. Update each tick if the time is CV-modulated. |
+| `releaseRate` | Release decrement per sample. Update each tick if the time is CV-modulated. |
+| `reset()` | Forces envelope to OFF state with output 0. Does not clear rates. |
+| `trigger()` | Starts the attack phase. Call on the rising edge of the gate. |
+| `process(gate)` | Advances the envelope by one sample. `gate` should be `true` while the gate signal is high. Returns the new output value. |
+
+**Example:**
+```cpp
+ataraxic_dsp::EnvelopeAR env;
+ataraxic_dsp::SchmittTrigger trig;
+
+// In process loop:
+env.attackRate  = 1.0f / (attackTimeSecs  * sampleRate);
+env.releaseRate = 1.0f / (releaseTimeSecs * sampleRate);
+
+bool gate = gateVoltage >= 1.0f;
+if (trig.process(gateVoltage))
+    env.trigger();
+
+float out = env.process(gate);
+// out is 0.0–1.0; scale to voltage: out * 10.f
+```
+
+---
+
+## cubicPotScale (`pot.hpp`)
+
+Maps a normalized potentiometer value in `[0, 1]` to a target range using a cubic (x³) curve. Gives a "log-pot" feel — finer resolution at the low end, compressed at the high end — without the discontinuities of a true logarithm near zero. Useful for any parameter that benefits from this response: time, frequency, gain, etc.
+
+```cpp
+inline float cubicPotScale(float param, float minVal, float maxVal);
 ```
 
 | Parameter | Description |
 |-----------|-------------|
-| `param` | Knob value in `[0, 1]`. |
-| `baseTime` | Minimum time in seconds (e.g. `0.001f` = 1 ms). |
-| `maxTime` | Maximum time in seconds (e.g. `2.0f` for attack, `10.0f` for decay). |
-
-Returns time in seconds.
+| `param` | Knob/CV value in `[0, 1]`. |
+| `minVal` | Output value when `param = 0` (e.g. `0.001f` for 1 ms). |
+| `maxVal` | Output value when `param = 1` (e.g. `10.0f` for 10 s). |
 
 **Example:**
 ```cpp
-float attackTime = ataraxic_dsp::advcaScaleTime(knobValue, 0.001f, 2.0f);
+float attackTime = ataraxic_dsp::cubicPotScale(knobValue, 0.001f, 2.0f);
 float attackRate = 1.0f / (attackTime * sampleRate);
 ```
 
@@ -139,26 +190,32 @@ float attackRate = 1.0f / (attackTime * sampleRate);
 
 ## VCA (`vca.hpp`)
 
-Stateless voltage-controlled amplifier with a blendable gain response curve. All methods are `static`.
+Voltage-controlled amplifier with a blendable gain response curve. Set `responseMix` once via `setResponse()` (e.g. on knob change); call `computeGain()` or `process()` each sample.
 
 ```cpp
 struct VCA {
-    static float computeGain(float gainNorm, float responseMix);
-    static float process(float in, float gainNorm, float responseMix);
+    void  setResponse(float responseMix);
+    float computeGain(float gainNorm) const;
+    float process(float in, float gainNorm) const;
 };
 ```
 
-| Parameter | Description |
-|-----------|-------------|
-| `gainNorm` | CV normalized to `[0, 1]` (e.g. `clamp(voltage / 10.f, 0.f, 1.f)`). |
-| `responseMix` | `0.0` = exponential (x⁴, punchy), `0.5` = linear, `1.0` = logarithmic (x^0.25). Values between these crossfade smoothly. |
-
-`computeGain` returns a gain multiplier in `[0, 1]`. `process` returns `in * computeGain(...)`.
+| Member | Description |
+|--------|-------------|
+| `setResponse(responseMix)` | Pre-computes blend coefficients for the given response. `0.0` = exponential (x⁴, punchy), `0.5` = linear, `1.0` = logarithmic (x^0.25). |
+| `computeGain(gainNorm)` | Returns gain in `[0, 1]`. `gainNorm` is CV normalized to `[0, 1]` (e.g. `clamp(voltage / 10.f, 0.f, 1.f)`). |
+| `process(in, gainNorm)` | Returns `in * computeGain(gainNorm)`. |
 
 **Example:**
 ```cpp
-float gain = ataraxic_dsp::VCA::computeGain(gainNorm, responseMix);
-float audioOut = audioIn * gain;
+ataraxic_dsp::VCA vca;
+
+// When the response knob changes:
+vca.setResponse(params[RESPONSE_PARAM].getValue());
+
+// Each sample:
+float gainNorm = clamp(cvVoltage / 10.f, 0.f, 1.f);
+float audioOut = vca.process(audioIn, gainNorm);
 ```
 
 ---
@@ -257,83 +314,62 @@ struct EightBitNoise {
 
 ---
 
-### UrusaiDsp
+### BlueFilter
 
-Full 7-output noise engine combining all generators. Handles per-sample caching so white and pink noise are computed only once per tick regardless of how many derived outputs consume them. Also holds one-pole filter state for tone shaping.
+First-order differencer applied to pink noise, producing a +3 dB/octave spectral slope. Feed it one pink noise sample per tick.
 
 ```cpp
-struct UrusaiDsp {
-    // Call once before use
-    void init(RngFn rngFn, void* ctx = 0);
-
-    // Call at the start of every sample tick
-    void beginSample();
-
-    // Raw noise outputs (before gain calibration)
-    float getWhite();                                  // [-1, 1), cached
-    float getPink();                                   // ~[-0.2, 0.2], cached
-    float getBlue();                                   // first-order diff of pink, gain 10×
-    float getViolet();                                 // first-order diff of white, gain 0.707×
-    float getVelvet(float character, float sampleTime);// sparse impulses, -1/0/+1
-    float getCmos(float character, float sampleTime);  // -1.0 or +1.0
-    float getEightBit(float character, float sampleTime); // -1.0 or +1.0
-
-    // One-pole filter state (public — update directly in your process loop)
-    float whiteLp,  whiteHpLp;
-    float pinkLp,   pinkHpLp;
-    float blueLp,   blueHpLp;
-    float violetLp, violetHpLp;
+struct BlueFilter {
+    void  reset();
+    float process(float pink);   // feed pink noise, returns blue noise (gain 10×)
 };
 ```
 
-**Tone filter pattern** (matches Urusai module behavior):
-```cpp
-// Compute coefficients once per sample from the character parameter
-float lpCutoff = std::pow(10.f, 1.f + 3.3f * clamp(character / 0.5f, 0.f, 1.f));
-float hpCutoff = std::pow(10.f, 1.f + 3.3f * clamp((character - 0.5f) / 0.5f, 0.f, 1.f));
-float gLp = clamp(lpCutoff * sampleTime * 3.14159f, 0.f, 1.f);
-float gHp = clamp(hpCutoff * sampleTime * 3.14159f, 0.f, 1.f);
-bool  isHp = character >= 0.5f;
+---
 
-// Apply to each toned output (white shown; repeat for pink, blue, violet)
-float raw = dsp.getWhite() * URUSAI_GAIN_WHITE;
-dsp.whiteLp   += gLp * (raw - dsp.whiteLp);
-dsp.whiteHpLp += gHp * (raw - dsp.whiteHpLp);
-float out = isHp ? (raw - dsp.whiteHpLp) : dsp.whiteLp;
+### VioletFilter
+
+First-order differencer applied to white noise, producing a +6 dB/octave spectral slope. Feed it one white noise sample per tick.
+
+```cpp
+struct VioletFilter {
+    void  reset();
+    float process(float white);  // feed white noise, returns violet noise (gain 0.707×)
+};
 ```
 
-At `character = 0`, the LP cutoff is at its minimum (~10 Hz), rolling off nearly all content. At `character = 0.5`, both cutoffs are at maximum (~20 kHz), passing the full signal. At `character = 1`, the HP cutoff is at its maximum, high-passing nearly all content.
+---
 
-**Minimal embedded example:**
+### VelvetNoise
+
+Sparse random impulses (+1 or −1) at a rate controlled by `character`. Requires an injected RNG for the probability check; the sign is determined by the caller-supplied white noise sample so the per-sample white cache can be shared.
+
 ```cpp
-static float myRng(void*) { /* wrap hardware TRNG */ }
-
-ataraxic_dsp::UrusaiDsp dsp;
-dsp.init(myRng);
-
-// In audio callback:
-dsp.beginSample();
-float white  = dsp.getWhite() * ataraxic_dsp::URUSAI_GAIN_WHITE;
-float cmos   = dsp.getCmos(0.5f, sampleTime) * ataraxic_dsp::URUSAI_GAIN_CMOS;
+struct VelvetNoise {
+    void  init(RngFn rngFn, void* ctx = 0);
+    float process(float character, float sampleTime, float white);
+};
 ```
+
+`character` in `[0, 1]` sweeps impulse rate from 10 Hz to 10 kHz. `white` is the current white noise sample (used for sign only).
 
 ---
 
 ## Gain Calibration Constants (`noise.hpp`)
 
-RMS-equalized output gain multipliers for each noise type, calibrated so all outputs have the same perceived loudness. Computed by `Urusai/noise_sim.cpp`.
+RMS-equalized output gain multipliers for each noise type, calibrated so all outputs have the same perceived loudness.
 
 | Constant | Value | Noise type |
 |----------|-------|------------|
-| `URUSAI_GAIN_WHITE`  | 5.0   | White noise |
-| `URUSAI_GAIN_PINK`   | 15.3  | Pink noise |
-| `URUSAI_GAIN_BLUE`   | 2.5   | Blue noise |
-| `URUSAI_GAIN_VIOLET` | 5.0   | Violet noise |
-| `URUSAI_GAIN_VELVET` | 11.0  | Velvet noise |
-| `URUSAI_GAIN_CMOS`   | 2.88  | CMOS noise |
-| `URUSAI_GAIN_8BIT`   | 2.88  | 8-bit noise |
+| `NOISE_GAIN_WHITE`  | 5.0   | White noise |
+| `NOISE_GAIN_PINK`   | 15.3  | Pink noise |
+| `NOISE_GAIN_BLUE`   | 2.5   | Blue noise |
+| `NOISE_GAIN_VIOLET` | 5.0   | Violet noise |
+| `NOISE_GAIN_VELVET` | 11.0  | Velvet noise |
+| `NOISE_GAIN_CMOS`   | 2.88  | CMOS noise |
+| `NOISE_GAIN_8BIT`   | 2.88  | 8-bit noise |
 
-Multiply raw generator output by the corresponding constant before sending to a DAC or VCV Rack output port. With these gains applied, each output produces approximately the same RMS level as white noise at `URUSAI_GAIN_WHITE` (≈ 2.9 V RMS).
+Multiply raw generator output by the corresponding constant before sending to a DAC or output port. With these gains applied, each output produces approximately the same RMS level as white noise at `NOISE_GAIN_WHITE` (≈ 2.9 V RMS).
 
 ---
 
@@ -350,4 +386,4 @@ Then include:
 #include "ataraxic_dsp/ataraxic_dsp.hpp"
 ```
 
-RAM budget for `UrusaiDsp` on Cortex-M: ~120 bytes. `EnvelopeADAR`: ~10 bytes.
+RAM budget for `EnvelopeADAR`: ~10 bytes.
