@@ -26,7 +26,9 @@ struct ADVCA : Module {
 		LIGHTS_LEN
 	};
 
-	ataraxic_dsp::EnvelopeADAR envelope;
+	ataraxic_dsp::EnvelopeAD envelopeAD;
+	ataraxic_dsp::EnvelopeAR envelopeAR;
+	bool usingAR = false;
 	ataraxic_dsp::SchmittTrigger trigTrigger;
 	ataraxic_dsp::SchmittTrigger gateSchmittTrigger;
 
@@ -59,16 +61,22 @@ struct ADVCA : Module {
 		float attackTime = ataraxic_dsp::advcaScaleTime(attackParam, 0.001f, 2.0f);
 		float decayTime  = ataraxic_dsp::advcaScaleTime(decayParam,  0.001f, 10.0f);
 
-		float attackRate = 1.f / (attackTime * args.sampleRate);
-		float decayRate  = 1.f / (decayTime  * args.sampleRate);
+		envelopeAD.attackRate  = 1.f / (attackTime * args.sampleRate);
+		envelopeAD.decayRate   = 1.f / (decayTime  * args.sampleRate);
+		envelopeAR.attackRate  = envelopeAD.attackRate;
+		envelopeAR.releaseRate = envelopeAD.decayRate;
 
 		if (trigTrigger.process(inputs[TRIG_INPUT].getVoltage())) {
-			envelope.triggerAD();
+			envelopeAD.trigger();
+			usingAR = false;
 		} else if (gateSchmittTrigger.process(inputs[GATE_INPUT].getVoltage())) {
-			envelope.triggerAR();
+			envelopeAR.trigger();
+			usingAR = true;
 		}
 
-		float envOut = envelope.process(attackRate, decayRate, gate);
+		float envOut = usingAR
+			? envelopeAR.process(gate)
+			: envelopeAD.process();
 
 		// Calculate 0 to 10V Envelope Output
 		outputs[ENV_OUTPUT].setVoltage(envOut * 10.f);

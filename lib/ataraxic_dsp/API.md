@@ -69,45 +69,88 @@ if (trig.process(gateVoltage)) {
 
 ---
 
-## EnvelopeADAR (`envelope.hpp`)
+## EnvelopeAD (`envelope.hpp`)
 
-Linear-ramp AD/AR envelope generator. Supports both one-shot (Attack-Decay) and gated (Attack-Release) modes.
+One-shot linear-ramp Attack-Decay envelope. Sequence: ATTACK → DECAY → OFF.
 
 ```cpp
-struct EnvelopeADAR {
-    float output;   // current output, 0.0 to 1.0 (read-only)
+struct EnvelopeAD {
+    float output;      // current output, 0.0 to 1.0 (read-only)
+    float attackRate;  // set to 1.0f / (attackTimeSecs * sampleRate)
+    float decayRate;   // set to 1.0f / (decayTimeSecs  * sampleRate)
 
     void  reset();
-    void  triggerAD();
-    void  triggerAR();
-    float process(float attackRate, float decayRate, bool gate);
+    void  trigger();
+    float process();
 };
 ```
 
 | Member | Description |
 |--------|-------------|
 | `output` | Current envelope value in `[0, 1]`. Readable at any time; also returned by `process()`. |
-| `reset()` | Forces envelope to OFF state with output 0. |
-| `triggerAD()` | Starts a one-shot AD envelope. Ignores gate level. Sequence: ATTACK → DECAY_RELEASE → OFF. |
-| `triggerAR()` | Starts a gated AR envelope. Call on the rising edge of a gate. Sequence: ATTACK → SUSTAIN (while gate is high) → DECAY_RELEASE → OFF. |
-| `process(attackRate, decayRate, gate)` | Advances the envelope by one sample. Returns the new output value. |
-
-**Rate calculation:**
-```cpp
-float attackRate = 1.0f / (attackTimeSecs * sampleRate);
-float decayRate  = 1.0f / (decayTimeSecs  * sampleRate);
-```
+| `attackRate` | Attack increment per sample. Update each tick if the time is CV-modulated. |
+| `decayRate` | Decay decrement per sample. Update each tick if the time is CV-modulated. |
+| `reset()` | Forces envelope to OFF state with output 0. Does not clear rates. |
+| `trigger()` | Starts the attack phase. |
+| `process()` | Advances the envelope by one sample. Returns the new output value. |
 
 **Example:**
 ```cpp
-ataraxic_dsp::EnvelopeADAR env;
+ataraxic_dsp::EnvelopeAD env;
 ataraxic_dsp::SchmittTrigger trig;
 
 // In process loop:
-if (trig.process(trigInput))
-    env.triggerAD();
+env.attackRate = 1.0f / (attackTimeSecs * sampleRate);
+env.decayRate  = 1.0f / (decayTimeSecs  * sampleRate);
 
-float out = env.process(attackRate, decayRate, /*gate=*/false);
+if (trig.process(trigInput))
+    env.trigger();
+
+float out = env.process();
+// out is 0.0–1.0; scale to voltage: out * 10.f
+```
+
+---
+
+## EnvelopeAR (`envelope.hpp`)
+
+Gated linear-ramp Attack-Release envelope with sustain. Sequence: ATTACK → SUSTAIN (while gate held) → RELEASE → OFF.
+
+```cpp
+struct EnvelopeAR {
+    float output;       // current output, 0.0 to 1.0 (read-only)
+    float attackRate;   // set to 1.0f / (attackTimeSecs  * sampleRate)
+    float releaseRate;  // set to 1.0f / (releaseTimeSecs * sampleRate)
+
+    void  reset();
+    void  trigger();
+    float process(bool gate);
+};
+```
+
+| Member | Description |
+|--------|-------------|
+| `output` | Current envelope value in `[0, 1]`. Readable at any time; also returned by `process()`. |
+| `attackRate` | Attack increment per sample. Update each tick if the time is CV-modulated. |
+| `releaseRate` | Release decrement per sample. Update each tick if the time is CV-modulated. |
+| `reset()` | Forces envelope to OFF state with output 0. Does not clear rates. |
+| `trigger()` | Starts the attack phase. Call on the rising edge of the gate. |
+| `process(gate)` | Advances the envelope by one sample. `gate` should be `true` while the gate signal is high. Returns the new output value. |
+
+**Example:**
+```cpp
+ataraxic_dsp::EnvelopeAR env;
+ataraxic_dsp::SchmittTrigger trig;
+
+// In process loop:
+env.attackRate  = 1.0f / (attackTimeSecs  * sampleRate);
+env.releaseRate = 1.0f / (releaseTimeSecs * sampleRate);
+
+bool gate = gateVoltage >= 1.0f;
+if (trig.process(gateVoltage))
+    env.trigger();
+
+float out = env.process(gate);
 // out is 0.0–1.0; scale to voltage: out * 10.f
 ```
 
