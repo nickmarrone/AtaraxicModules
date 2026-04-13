@@ -1,7 +1,7 @@
 #include <iostream>
 #include <random>
 #include <cmath>
-#include "../lib/ataraxic_dsp/ataraxic_dsp.hpp"
+#include "src/UrusaiDsp.hpp"
 
 // Standalone RMS calibration tool for Urusai noise types.
 // Generates 10 seconds of audio at 44.1 kHz and reports RMS values and
@@ -22,7 +22,7 @@ int main() {
     const float sampleTime = 1.0f / 44100.0f;
     const float character  = 0.5f; // mid-point tone for calibration
 
-    ataraxic_dsp::UrusaiDsp dsp;
+    UrusaiDsp dsp;
     dsp.init(rngFn);
 
     double sumSqWhite  = 0, sumSqPink   = 0, sumSqBlue  = 0;
@@ -67,13 +67,13 @@ int main() {
 
     std::cout << std::endl;
     std::cout << "Current gain constants in noise.hpp:" << std::endl;
-    std::cout << "URUSAI_GAIN_WHITE  = " << ataraxic_dsp::URUSAI_GAIN_WHITE  << std::endl;
-    std::cout << "URUSAI_GAIN_PINK   = " << ataraxic_dsp::URUSAI_GAIN_PINK   << std::endl;
-    std::cout << "URUSAI_GAIN_BLUE   = " << ataraxic_dsp::URUSAI_GAIN_BLUE   << std::endl;
-    std::cout << "URUSAI_GAIN_VIOLET = " << ataraxic_dsp::URUSAI_GAIN_VIOLET << std::endl;
-    std::cout << "URUSAI_GAIN_VELVET = " << ataraxic_dsp::URUSAI_GAIN_VELVET << std::endl;
-    std::cout << "URUSAI_GAIN_CMOS   = " << ataraxic_dsp::URUSAI_GAIN_CMOS   << std::endl;
-    std::cout << "URUSAI_GAIN_8BIT   = " << ataraxic_dsp::URUSAI_GAIN_8BIT   << std::endl;
+    std::cout << "URUSAI_GAIN_WHITE  = " << ataraxic_dsp::NOISE_GAIN_WHITE  << std::endl;
+    std::cout << "URUSAI_GAIN_PINK   = " << ataraxic_dsp::NOISE_GAIN_PINK   << std::endl;
+    std::cout << "URUSAI_GAIN_BLUE   = " << ataraxic_dsp::NOISE_GAIN_BLUE   << std::endl;
+    std::cout << "URUSAI_GAIN_VIOLET = " << ataraxic_dsp::NOISE_GAIN_VIOLET << std::endl;
+    std::cout << "URUSAI_GAIN_VELVET = " << ataraxic_dsp::NOISE_GAIN_VELVET << std::endl;
+    std::cout << "URUSAI_GAIN_CMOS   = " << ataraxic_dsp::NOISE_GAIN_CMOS   << std::endl;
+    std::cout << "URUSAI_GAIN_8BIT   = " << ataraxic_dsp::NOISE_GAIN_8BIT   << std::endl;
 
     return 0;
 }

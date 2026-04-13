@@ -1,5 +1,5 @@
 #include "plugin.hpp"
-#include "../../lib/ataraxic_dsp/ataraxic_dsp.hpp"
+#include "UrusaiDsp.hpp"
 
 static float rackRngWrapper(void*) {
     return rack::random::uniform();
@@ -48,7 +48,7 @@ struct Urusai : Module {
 		LIGHTS_LEN
 	};
 
-	ataraxic_dsp::UrusaiDsp dsp;
+	UrusaiDsp dsp;
 
 	Urusai() {
 		config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -84,43 +84,43 @@ struct Urusai : Module {
 		bool isHp = character >= 0.5f;
 
 		if (outputs[WHITE_OUTPUT].isConnected()) {
-			float in = dsp.getWhite() * ataraxic_dsp::URUSAI_GAIN_WHITE;
+			float in = dsp.getWhite() * ataraxic_dsp::NOISE_GAIN_WHITE;
 			dsp.whiteLp  += gLp * (in - dsp.whiteLp);
 			dsp.whiteHpLp += gHp * (in - dsp.whiteHpLp);
 			outputs[WHITE_OUTPUT].setVoltage(isHp ? (in - dsp.whiteHpLp) : dsp.whiteLp);
 		}
 
 		if (outputs[PINK_OUTPUT].isConnected()) {
-			float in = dsp.getPink() * ataraxic_dsp::URUSAI_GAIN_PINK;
+			float in = dsp.getPink() * ataraxic_dsp::NOISE_GAIN_PINK;
 			dsp.pinkLp  += gLp * (in - dsp.pinkLp);
 			dsp.pinkHpLp += gHp * (in - dsp.pinkHpLp);
 			outputs[PINK_OUTPUT].setVoltage(isHp ? (in - dsp.pinkHpLp) : dsp.pinkLp);
 		}
 
 		if (outputs[BLUE_OUTPUT].isConnected()) {
-			float in = dsp.getBlue() * ataraxic_dsp::URUSAI_GAIN_BLUE;
+			float in = dsp.getBlue() * ataraxic_dsp::NOISE_GAIN_BLUE;
 			dsp.blueLp  += gLp * (in - dsp.blueLp);
 			dsp.blueHpLp += gHp * (in - dsp.blueHpLp);
 			outputs[BLUE_OUTPUT].setVoltage(isHp ? (in - dsp.blueHpLp) : dsp.blueLp);
 		}
 
 		if (outputs[VIOLET_OUTPUT].isConnected()) {
-			float in = dsp.getViolet() * ataraxic_dsp::URUSAI_GAIN_VIOLET;
+			float in = dsp.getViolet() * ataraxic_dsp::NOISE_GAIN_VIOLET;
 			dsp.violetLp  += gLp * (in - dsp.violetLp);
 			dsp.violetHpLp += gHp * (in - dsp.violetHpLp);
 			outputs[VIOLET_OUTPUT].setVoltage(isHp ? (in - dsp.violetHpLp) : dsp.violetLp);
 		}
 
 		if (outputs[VELVET_OUTPUT].isConnected()) {
-			outputs[VELVET_OUTPUT].setVoltage(dsp.getVelvet(character, args.sampleTime) * ataraxic_dsp::URUSAI_GAIN_VELVET);
+			outputs[VELVET_OUTPUT].setVoltage(dsp.getVelvet(character, args.sampleTime) * ataraxic_dsp::NOISE_GAIN_VELVET);
 		}
 
 		if (outputs[CMOS_OUTPUT].isConnected()) {
-			outputs[CMOS_OUTPUT].setVoltage(dsp.getCmos(character, args.sampleTime) * ataraxic_dsp::URUSAI_GAIN_CMOS);
+			outputs[CMOS_OUTPUT].setVoltage(dsp.getCmos(character, args.sampleTime) * ataraxic_dsp::NOISE_GAIN_CMOS);
 		}
 
 		if (outputs[EIGHT_BIT_OUTPUT].isConnected()) {
-			outputs[EIGHT_BIT_OUTPUT].setVoltage(dsp.getEightBit(character, args.sampleTime) * ataraxic_dsp::URUSAI_GAIN_8BIT);
+			outputs[EIGHT_BIT_OUTPUT].setVoltage(dsp.getEightBit(character, args.sampleTime) * ataraxic_dsp::NOISE_GAIN_8BIT);
 		}
 	}
 };

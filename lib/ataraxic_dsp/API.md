@@ -298,83 +298,21 @@ struct VelvetNoise {
 
 ---
 
-### UrusaiDsp
-
-Full 7-output noise engine combining all generators. Handles per-sample caching so white and pink noise are computed only once per tick regardless of how many derived outputs consume them. Also holds one-pole filter state for tone shaping.
-
-```cpp
-struct UrusaiDsp {
-    // Call once before use
-    void init(RngFn rngFn, void* ctx = 0);
-
-    // Call at the start of every sample tick
-    void beginSample();
-
-    // Raw noise outputs (before gain calibration)
-    float getWhite();                                  // [-1, 1), cached
-    float getPink();                                   // ~[-0.2, 0.2], cached
-    float getBlue();                                   // first-order diff of pink, gain 10×
-    float getViolet();                                 // first-order diff of white, gain 0.707×
-    float getVelvet(float character, float sampleTime);// sparse impulses, -1/0/+1
-    float getCmos(float character, float sampleTime);  // -1.0 or +1.0
-    float getEightBit(float character, float sampleTime); // -1.0 or +1.0
-
-    // One-pole filter state (public — update directly in your process loop)
-    float whiteLp,  whiteHpLp;
-    float pinkLp,   pinkHpLp;
-    float blueLp,   blueHpLp;
-    float violetLp, violetHpLp;
-};
-```
-
-**Tone filter pattern** (matches Urusai module behavior):
-```cpp
-// Compute coefficients once per sample from the character parameter
-float lpCutoff = std::pow(10.f, 1.f + 3.3f * clamp(character / 0.5f, 0.f, 1.f));
-float hpCutoff = std::pow(10.f, 1.f + 3.3f * clamp((character - 0.5f) / 0.5f, 0.f, 1.f));
-float gLp = clamp(lpCutoff * sampleTime * 3.14159f, 0.f, 1.f);
-float gHp = clamp(hpCutoff * sampleTime * 3.14159f, 0.f, 1.f);
-bool  isHp = character >= 0.5f;
-
-// Apply to each toned output (white shown; repeat for pink, blue, violet)
-float raw = dsp.getWhite() * URUSAI_GAIN_WHITE;
-dsp.whiteLp   += gLp * (raw - dsp.whiteLp);
-dsp.whiteHpLp += gHp * (raw - dsp.whiteHpLp);
-float out = isHp ? (raw - dsp.whiteHpLp) : dsp.whiteLp;
-```
-
-At `character = 0`, the LP cutoff is at its minimum (~10 Hz), rolling off nearly all content. At `character = 0.5`, both cutoffs are at maximum (~20 kHz), passing the full signal. At `character = 1`, the HP cutoff is at its maximum, high-passing nearly all content.
-
-**Minimal embedded example:**
-```cpp
-static float myRng(void*) { /* wrap hardware TRNG */ }
-
-ataraxic_dsp::UrusaiDsp dsp;
-dsp.init(myRng);
-
-// In audio callback:
-dsp.beginSample();
-float white  = dsp.getWhite() * ataraxic_dsp::URUSAI_GAIN_WHITE;
-float cmos   = dsp.getCmos(0.5f, sampleTime) * ataraxic_dsp::URUSAI_GAIN_CMOS;
-```
-
----
-
 ## Gain Calibration Constants (`noise.hpp`)
 
-RMS-equalized output gain multipliers for each noise type, calibrated so all outputs have the same perceived loudness. Computed by `Urusai/noise_sim.cpp`.
+RMS-equalized output gain multipliers for each noise type, calibrated so all outputs have the same perceived loudness.
 
 | Constant | Value | Noise type |
 |----------|-------|------------|
-| `URUSAI_GAIN_WHITE`  | 5.0   | White noise |
-| `URUSAI_GAIN_PINK`   | 15.3  | Pink noise |
-| `URUSAI_GAIN_BLUE`   | 2.5   | Blue noise |
-| `URUSAI_GAIN_VIOLET` | 5.0   | Violet noise |
-| `URUSAI_GAIN_VELVET` | 11.0  | Velvet noise |
-| `URUSAI_GAIN_CMOS`   | 2.88  | CMOS noise |
-| `URUSAI_GAIN_8BIT`   | 2.88  | 8-bit noise |
+| `NOISE_GAIN_WHITE`  | 5.0   | White noise |
+| `NOISE_GAIN_PINK`   | 15.3  | Pink noise |
+| `NOISE_GAIN_BLUE`   | 2.5   | Blue noise |
+| `NOISE_GAIN_VIOLET` | 5.0   | Violet noise |
+| `NOISE_GAIN_VELVET` | 11.0  | Velvet noise |
+| `NOISE_GAIN_CMOS`   | 2.88  | CMOS noise |
+| `NOISE_GAIN_8BIT`   | 2.88  | 8-bit noise |
 
-Multiply raw generator output by the corresponding constant before sending to a DAC or VCV Rack output port. With these gains applied, each output produces approximately the same RMS level as white noise at `URUSAI_GAIN_WHITE` (≈ 2.9 V RMS).
+Multiply raw generator output by the corresponding constant before sending to a DAC or output port. With these gains applied, each output produces approximately the same RMS level as white noise at `NOISE_GAIN_WHITE` (≈ 2.9 V RMS).
 
 ---
 
@@ -391,4 +329,4 @@ Then include:
 #include "ataraxic_dsp/ataraxic_dsp.hpp"
 ```
 
-RAM budget for `UrusaiDsp` on Cortex-M: ~120 bytes. `EnvelopeADAR`: ~10 bytes.
+RAM budget for `EnvelopeADAR`: ~10 bytes.
