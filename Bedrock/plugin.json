@@ -1,0 +1,27 @@
+{
+  "slug": "Bedrock",
+  "name": "Bedrock",
+  "version": "2.0.0",
+  "license": "CC0-1.0",
+  "brand": "Ataraxic",
+  "author": "Nicholas Marrone",
+  "authorEmail": "",
+  "authorUrl": "",
+  "pluginUrl": "",
+  "manualUrl": "",
+  "sourceUrl": "",
+  "donateUrl": "",
+  "changelogUrl": "",
+  "modules": [
+    {
+      "slug": "Bedrock",
+      "name": "Bedrock",
+      "description": "Analog-style sine kick drum voice",
+      "tags": [
+        "Drum",
+        "Oscillator",
+        "Envelope generator"
+      ]
+    }
+  ]
+}

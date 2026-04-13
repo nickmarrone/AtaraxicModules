@@ -20,3 +20,4 @@
 #include "onepole.hpp"
 #include "noise.hpp"
 #include "oscillator.hpp"
+#include "saturator.hpp"

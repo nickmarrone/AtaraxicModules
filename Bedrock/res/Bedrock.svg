@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="91.44" height="380" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- Background -->
+  <rect width="91.44" height="380" fill="#e0e0e0"/>
+
+  <!-- Dark header band for title -->
+  <rect x="0" y="0" width="91.44" height="35" fill="#222222"/>
+
+  <!-- Dark background behind TRIG input -->
+  <rect x="28.72" y="40" width="34" height="40" fill="#222222" rx="3"/>
+
+  <!-- Dark background behind OUT output -->
+  <rect x="28.72" y="260" width="34" height="40" fill="#222222" rx="3"/>
+
+</svg>

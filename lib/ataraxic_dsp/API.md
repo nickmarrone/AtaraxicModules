@@ -419,6 +419,31 @@ RAM budget on Cortex-M: ~4 bytes (phase only). The 256-entry LUT is `static cons
 
 ---
 
+## Saturator (`saturator.hpp`)
+
+Soft-clip saturator using tanh with drive-controlled gain compensation. All methods are `static`.
+
+```cpp
+struct Saturator {
+    static float process(float in, float drive);
+};
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `in`      | Audio input sample, any range. |
+| `drive`   | Saturation amount in `[0, 1]`. `0` = 1× gain (gentle brickwall near ±1), `1` = 10× gain (heavy saturation, onset around ±0.1). |
+
+Returns `tanh(in * gain) / gain` where `gain = 1 + drive * 9`. Small-signal behavior is unity gain; large signals are progressively soft-clipped. The `/ gain` normalization keeps output peaks at roughly the same level as the input regardless of drive setting.
+
+**Example:**
+```cpp
+float out = ataraxic_dsp::Saturator::process(audioSample, driveKnob);
+// driveKnob in [0, 1]; out is bounded to roughly ±1
+```
+
+---
+
 ## Embedded CMake Integration
 
 ```cmake
