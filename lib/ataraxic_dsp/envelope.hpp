@@ -104,13 +104,5 @@ struct EnvelopeAR {
     }
 };
 
-// Cubic "log-pot" time scaling used by ADVCA.
-// Maps param in [0, 1] to a time in seconds using a x^3 curve, giving a more
-// natural feel than a pure exponential: slow times spread out more evenly.
-//   baseTime: minimum time (e.g. 0.001s = 1ms)
-//   maxTime:  maximum time (e.g. 2.0s for attack, 10.0s for decay)
-inline float advcaScaleTime(float param, float baseTime, float maxTime) {
-    return baseTime + (maxTime - baseTime) * (param * param * param);
-}
 
 } // namespace ataraxic_dsp

@@ -156,25 +156,23 @@ float out = env.process(gate);
 
 ---
 
-## advcaScaleTime (`envelope.hpp`)
+## cubicPotScale (`pot.hpp`)
 
-Cubic "log-pot" time scaling. Maps a knob parameter in `[0, 1]` to a time in seconds using an x³ curve. Compared to a linear mapping, this spreads short times out more finely while compressing the upper range — similar to a logarithmic potentiometer.
+Maps a normalized potentiometer value in `[0, 1]` to a target range using a cubic (x³) curve. Gives a "log-pot" feel — finer resolution at the low end, compressed at the high end — without the discontinuities of a true logarithm near zero. Useful for any parameter that benefits from this response: time, frequency, gain, etc.
 
 ```cpp
-inline float advcaScaleTime(float param, float baseTime, float maxTime);
+inline float cubicPotScale(float param, float minVal, float maxVal);
 ```
 
 | Parameter | Description |
 |-----------|-------------|
-| `param` | Knob value in `[0, 1]`. |
-| `baseTime` | Minimum time in seconds (e.g. `0.001f` = 1 ms). |
-| `maxTime` | Maximum time in seconds (e.g. `2.0f` for attack, `10.0f` for decay). |
-
-Returns time in seconds.
+| `param` | Knob/CV value in `[0, 1]`. |
+| `minVal` | Output value when `param = 0` (e.g. `0.001f` for 1 ms). |
+| `maxVal` | Output value when `param = 1` (e.g. `10.0f` for 10 s). |
 
 **Example:**
 ```cpp
-float attackTime = ataraxic_dsp::advcaScaleTime(knobValue, 0.001f, 2.0f);
+float attackTime = ataraxic_dsp::cubicPotScale(knobValue, 0.001f, 2.0f);
 float attackRate = 1.0f / (attackTime * sampleRate);
 ```
 

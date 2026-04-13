@@ -58,8 +58,8 @@ struct ADVCA : Module {
 		// Time scaling: Map 0-1 param to 1ms -> 10s using a cubic curve.
 		// A cubic curve (x^3) gives a more natural "log pot" feel than the pure exponential formula,
 		// spreading out the mid-range times more evenly.
-		float attackTime = ataraxic_dsp::advcaScaleTime(attackParam, 0.001f, 2.0f);
-		float decayTime  = ataraxic_dsp::advcaScaleTime(decayParam,  0.001f, 10.0f);
+		float attackTime = ataraxic_dsp::cubicPotScale(attackParam, 0.001f, 2.0f);
+		float decayTime  = ataraxic_dsp::cubicPotScale(decayParam,  0.001f, 10.0f);
 
 		envelopeAD.attackRate  = 1.f / (attackTime * args.sampleRate);
 		envelopeAD.decayRate   = 1.f / (decayTime  * args.sampleRate);
