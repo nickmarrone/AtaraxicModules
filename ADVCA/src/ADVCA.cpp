@@ -29,6 +29,7 @@ struct ADVCA : Module {
 	ataraxic_dsp::EnvelopeAD envelopeAD;
 	ataraxic_dsp::EnvelopeAR envelopeAR;
 	bool usingAR = false;
+	ataraxic_dsp::VCA vca;
 	ataraxic_dsp::SchmittTrigger trigTrigger;
 	ataraxic_dsp::SchmittTrigger gateSchmittTrigger;
 
@@ -82,6 +83,8 @@ struct ADVCA : Module {
 		outputs[ENV_OUTPUT].setVoltage(envOut * 10.f);
 
 		// --- VCA ---
+		vca.setResponse(params[RESPONSE_PARAM].getValue());
+
 		// CV is normalled to ENV_OUTPUT
 		float cvVolts = inputs[CV_INPUT].getNormalVoltage(envOut * 10.f);
 
@@ -89,10 +92,8 @@ struct ADVCA : Module {
 		float cvInput = cvVolts * params[CV_ATTEN_PARAM].getValue();
 
 		// Map CV (0-10V) to [0, 1] gain scale
-		float gainNorm = clamp(cvInput / 10.f, 0.f, 1.f);
-
-		float responseMix = params[RESPONSE_PARAM].getValue(); // 0 = Exp, 0.5 = Lin, 1 = Log
-		float finalGain   = ataraxic_dsp::VCA::computeGain(gainNorm, responseMix);
+		float gainNorm  = clamp(cvInput / 10.f, 0.f, 1.f);
+		float finalGain = vca.computeGain(gainNorm);
 
 		// Apply VCA
 		float audioIn  = inputs[IN_INPUT].getVoltage();

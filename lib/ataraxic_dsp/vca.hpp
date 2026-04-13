@@ -4,31 +4,47 @@
 namespace ataraxic_dsp {
 
 // Voltage-controlled amplifier with blendable gain response curves.
-// All methods are stateless (static).
+//
+// Set responseMix once (or whenever the knob changes) via setResponse().
+// Call computeGain(gainNorm) or process(in, gainNorm) each sample.
+//
+// responseMix: 0.0 = full exponential (x^4, punchy)
+//              0.5 = linear
+//              1.0 = full logarithmic (x^0.25)
 struct VCA {
-    // Compute gain given a normalized CV and response mix.
-    //   gainNorm:    CV normalized to [0, 1] (e.g. voltage / 10V, clamped)
-    //   responseMix: 0.0 = full exponential (x^4, punchy),
-    //                0.5 = linear,
-    //                1.0 = full logarithmic (x^0.25)
-    // Returns gain in [0, 1].
-    static float computeGain(float gainNorm, float responseMix) {
-        float expGain = gainNorm * gainNorm * gainNorm * gainNorm;
-        float linGain = gainNorm;
-        float logGain = std::pow(gainNorm, 0.25f);
+    // Pre-computed from responseMix; updated by setResponse().
+    bool  _upperHalf;  // true when responseMix >= 0.5
+    float _mix;        // blend weight within the active half-range, [0, 1]
+    float _invMix;     // 1 - _mix
 
-        if (responseMix < 0.5f) {
-            float mix = responseMix * 2.0f;
-            return expGain + mix * (linGain - expGain);
+    VCA() { setResponse(0.5f); }
+
+    // Call whenever responseMix changes (e.g. on knob update).
+    void setResponse(float responseMix) {
+        _upperHalf = responseMix >= 0.5f;
+        _mix    = _upperHalf ? (responseMix - 0.5f) * 2.0f : responseMix * 2.0f;
+        _invMix = 1.0f - _mix;
+    }
+
+    // Compute gain from a normalized CV value.
+    //   gainNorm: CV normalized to [0, 1] (e.g. clamp(voltage / 10.f, 0.f, 1.f))
+    // Returns gain in [0, 1].
+    float computeGain(float gainNorm) const {
+        if (_upperHalf) {
+            // Blend linear → logarithmic (x^0.25 via two sqrts, faster than pow)
+            float logGain = std::sqrt(std::sqrt(gainNorm));
+            return gainNorm * _invMix + logGain * _mix;
         } else {
-            float mix = (responseMix - 0.5f) * 2.0f;
-            return linGain + mix * (logGain - linGain);
+            // Blend exponential (x^4) → linear
+            float g2      = gainNorm * gainNorm;
+            float expGain = g2 * g2;
+            return expGain * _invMix + gainNorm * _mix;
         }
     }
 
     // Apply gain to an audio sample.
-    static float process(float in, float gainNorm, float responseMix) {
-        return in * computeGain(gainNorm, responseMix);
+    float process(float in, float gainNorm) const {
+        return in * computeGain(gainNorm);
     }
 };
 

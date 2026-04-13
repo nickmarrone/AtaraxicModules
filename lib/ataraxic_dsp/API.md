@@ -180,26 +180,32 @@ float attackRate = 1.0f / (attackTime * sampleRate);
 
 ## VCA (`vca.hpp`)
 
-Stateless voltage-controlled amplifier with a blendable gain response curve. All methods are `static`.
+Voltage-controlled amplifier with a blendable gain response curve. Set `responseMix` once via `setResponse()` (e.g. on knob change); call `computeGain()` or `process()` each sample.
 
 ```cpp
 struct VCA {
-    static float computeGain(float gainNorm, float responseMix);
-    static float process(float in, float gainNorm, float responseMix);
+    void  setResponse(float responseMix);
+    float computeGain(float gainNorm) const;
+    float process(float in, float gainNorm) const;
 };
 ```
 
-| Parameter | Description |
-|-----------|-------------|
-| `gainNorm` | CV normalized to `[0, 1]` (e.g. `clamp(voltage / 10.f, 0.f, 1.f)`). |
-| `responseMix` | `0.0` = exponential (x⁴, punchy), `0.5` = linear, `1.0` = logarithmic (x^0.25). Values between these crossfade smoothly. |
-
-`computeGain` returns a gain multiplier in `[0, 1]`. `process` returns `in * computeGain(...)`.
+| Member | Description |
+|--------|-------------|
+| `setResponse(responseMix)` | Pre-computes blend coefficients for the given response. `0.0` = exponential (x⁴, punchy), `0.5` = linear, `1.0` = logarithmic (x^0.25). |
+| `computeGain(gainNorm)` | Returns gain in `[0, 1]`. `gainNorm` is CV normalized to `[0, 1]` (e.g. `clamp(voltage / 10.f, 0.f, 1.f)`). |
+| `process(in, gainNorm)` | Returns `in * computeGain(gainNorm)`. |
 
 **Example:**
 ```cpp
-float gain = ataraxic_dsp::VCA::computeGain(gainNorm, responseMix);
-float audioOut = audioIn * gain;
+ataraxic_dsp::VCA vca;
+
+// When the response knob changes:
+vca.setResponse(params[RESPONSE_PARAM].getValue());
+
+// Each sample:
+float gainNorm = clamp(cvVoltage / 10.f, 0.f, 1.f);
+float audioOut = vca.process(audioIn, gainNorm);
 ```
 
 ---
