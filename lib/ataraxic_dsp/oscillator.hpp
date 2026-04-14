@@ -228,14 +228,28 @@ struct MorphingOscillator {
     }
 
 private:
+    // Per-shape RMS normalization gains (at neutral timbre = 0.5):
+    //   Sine:     RMS = 1/√2  → gain = √(2/3) ≈ 0.8165
+    //   Triangle: RMS = 1/√3  → gain = 1.0 (reference)
+    //   Pulse:    RMS = 1.0   → gain = 1/√3  ≈ 0.5774
+    //   Saw:      RMS = 1/√3  → gain = 1.0
+    // Normalizing to triangle/saw keeps all peak outputs within [-1, 1].
+    static float _shapeGain(int idx) {
+        static const float kGain[4] = { 0.8165f, 1.0f, 0.5774f, 1.0f };
+        return kGain[idx];
+    }
+
     static float _morphOutput(float ph, float morph, float timbre) {
-        if (morph <= 0.0f) return detail::osc_shape(ph, 0, timbre);
-        if (morph >= 3.0f) return detail::osc_shape(ph, 3, timbre);
+        if (morph <= 0.0f) return _shapeGain(0) * detail::osc_shape(ph, 0, timbre);
+        if (morph >= 3.0f) return _shapeGain(3) * detail::osc_shape(ph, 3, timbre);
         int   base = (int)morph;
         float frac = morph - (float)base;
-        float a    = detail::osc_shape(ph, base,     timbre);
-        float b    = detail::osc_shape(ph, base + 1, timbre);
-        return a + frac * (b - a);
+        // Constant-power crossfade: maintains RMS through the blend.
+        float ga   = std::cos(frac * (3.14159265f * 0.5f));
+        float gb   = std::sin(frac * (3.14159265f * 0.5f));
+        float a    = _shapeGain(base)     * detail::osc_shape(ph, base,     timbre);
+        float b    = _shapeGain(base + 1) * detail::osc_shape(ph, base + 1, timbre);
+        return ga * a + gb * b;
     }
 };
 
