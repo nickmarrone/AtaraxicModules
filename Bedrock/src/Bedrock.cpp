@@ -24,10 +24,11 @@ struct Bedrock : Module {
 	};
 
 	ataraxic_dsp::SchmittTrigger trigger;
-	ataraxic_dsp::EnvelopeADAR   pitchEnv;
-	ataraxic_dsp::EnvelopeADAR   vcaEnv;
+	ataraxic_dsp::EnvelopeAD     pitchEnv;
+	ataraxic_dsp::EnvelopeAD     vcaEnv;
 	ataraxic_dsp::Oscillator     osc;
 	ataraxic_dsp::OnePole        toneFilter;
+	ataraxic_dsp::VCA            vca;
 
 	Bedrock() {
 		config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -41,31 +42,35 @@ struct Bedrock : Module {
 
 		configInput(TRIG_INPUT,  "Trigger");
 		configOutput(OUT_OUTPUT, "Audio Out");
+
+		trigger.lowThreshold  = 0.1f;
+		trigger.highThreshold = 2.0f;
+		vca.setResponse(0.0f);
 	}
 
 	void process(const ProcessArgs& args) override {
 		float sampleTime = args.sampleTime;
 
 		// --- TRIGGER ---
-		bool triggered = trigger.process(inputs[TRIG_INPUT].getVoltage(), 0.1f, 2.0f);
+		bool triggered = trigger.process(inputs[TRIG_INPUT].getVoltage());
 		if (triggered) {
-			pitchEnv.triggerAD();
-			vcaEnv.triggerAD();
+			pitchEnv.trigger();
+			vcaEnv.trigger();
 		}
 
 		// --- PITCH ENVELOPE ---
 		// Fixed ~0.1ms attack; P.DEC: 1ms–500ms
-		float pitchAttackRate = 1.0f / (0.0001f * args.sampleRate);
-		float pitchDecayTime  = ataraxic_dsp::advcaScaleTime(params[PDEC_PARAM].getValue(), 0.001f, 0.5f);
-		float pitchDecayRate  = 1.0f / (pitchDecayTime * args.sampleRate);
-		float pitchEnvOut     = pitchEnv.process(pitchAttackRate, pitchDecayRate, false);
+		float pitchDecayTime      = ataraxic_dsp::cubicPotScale(params[PDEC_PARAM].getValue(), 0.001f, 0.5f);
+		pitchEnv.attackRate       = 1.0f / (0.0001f * args.sampleRate);
+		pitchEnv.decayRate        = 1.0f / (pitchDecayTime * args.sampleRate);
+		float pitchEnvOut         = pitchEnv.process();
 
 		// --- VCA ENVELOPE ---
 		// Fixed ~0.5ms attack; DECAY: 10ms–2s
-		float vcaAttackRate = 1.0f / (0.0005f * args.sampleRate);
-		float vcaDecayTime  = ataraxic_dsp::advcaScaleTime(params[DECAY_PARAM].getValue(), 0.01f, 2.0f);
-		float vcaDecayRate  = 1.0f / (vcaDecayTime * args.sampleRate);
-		float vcaEnvOut     = vcaEnv.process(vcaAttackRate, vcaDecayRate, false);
+		float vcaDecayTime        = ataraxic_dsp::cubicPotScale(params[DECAY_PARAM].getValue(), 0.01f, 2.0f);
+		vcaEnv.attackRate         = 1.0f / (0.0005f * args.sampleRate);
+		vcaEnv.decayRate          = 1.0f / (vcaDecayTime * args.sampleRate);
+		float vcaEnvOut           = vcaEnv.process();
 
 		// --- OSCILLATOR ---
 		// Pitch sweeps from baseFreq * 2^pitchOctaves down to baseFreq
@@ -82,7 +87,7 @@ struct Bedrock : Module {
 
 		// --- VCA ---
 		// Exponential response (responseMix=0) for punchy envelope shape
-		float vcaGain = ataraxic_dsp::VCA::computeGain(vcaEnvOut, 0.0f);
+		float vcaGain = vca.computeGain(vcaEnvOut);
 		float audio   = filtered * vcaGain;
 
 		// --- SATURATOR + OUTPUT ---
