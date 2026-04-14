@@ -445,7 +445,7 @@ struct MorphingOscillator {
 |--------|-------------|
 | `reset()` | Resets phase to 0. |
 | `setPhase(p)` | Sets phase directly. `p` is wrapped to `[0, 1)`. |
-| `process(freqHz, sampleTime, morph, timbre)` | Advances phase by `freqHz * sampleTime` and returns the crossfaded output in `[-1, 1]`. `timbre` in `[0, 1]` shapes the waveform(s); `0.5` is neutral for all shapes. |
+| `process(freqHz, sampleTime, morph, timbre)` | Advances phase by `freqHz * sampleTime` and returns the crossfaded output. Constant-power crossfade and per-shape RMS normalization keep apparent volume consistent as `morph` sweeps. `timbre` in `[0, 1]` shapes the waveform(s); `0.5` is neutral for all shapes. |
 | `processTZ(instFreqHz, sampleTime, morph, timbre)` | Like `process()` but uses a floor-based phase wrap that handles negative `instFreqHz`. Feed the result of `fmThroughZero()` here. |
 
 **`morph` parameter:**
