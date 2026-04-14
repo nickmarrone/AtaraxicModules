@@ -1,0 +1,25 @@
+{
+  "slug": "vesper",
+  "name": "Vesper",
+  "version": "2.0.0",
+  "license": "CC0-1.0",
+  "brand": "Ataraxic",
+  "author": "Nicholas Marrone",
+  "authorEmail": "",
+  "authorUrl": "",
+  "pluginUrl": "",
+  "manualUrl": "",
+  "sourceUrl": "",
+  "donateUrl": "",
+  "changelogUrl": "",
+  "modules": [
+    {
+      "slug": "Vesper",
+      "name": "Vesper",
+      "description": "Waveform-morphing VCO",
+      "tags": [
+        "Oscillator"
+      ]
+    }
+  ]
+}

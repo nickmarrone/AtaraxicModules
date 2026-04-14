@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="60.96" height="381" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="60.96" height="381" fill="#d8dce4"/>
+
+  <!-- Dividing line at panel center (y=190) -->
+  <line x1="6" y1="190" x2="54.96" y2="190" stroke="#b0b4bc" stroke-width="0.75" stroke-linecap="round"/>
+
+  <!-- Vertical connector: FM ATT trimpot (y=265) to FM CV jack (y=315) -->
+  <line x1="16" y1="272" x2="16" y2="308" stroke="#b0b4bc" stroke-width="0.5" stroke-linecap="round"/>
+
+  <!-- Vertical connector: TIMBRE ATT trimpot (y=265) to TIMBRE CV jack (y=315) -->
+  <line x1="44" y1="272" x2="44" y2="308" stroke="#b0b4bc" stroke-width="0.5" stroke-linecap="round"/>
+
+  <!-- Output background (centered at x=44) -->
+  <rect x="30" y="315" width="28" height="40" fill="#222222" rx="3"/>
+</svg>
