@@ -63,8 +63,8 @@ struct Vesper : Module {
 		float fmCV = inputs[FM_INPUT].getVoltage() / 5.f
 		             * params[FM_ATTEN_PARAM].getValue();
 
-		// Morph [0, 1] → [0, 3] (sine→tri→pulse→saw)
-		float morph = params[MORPH_PARAM].getValue() * 3.f;
+		// Morph [0, 1] → [0, 4] (sine→tri→pulse→saw→super saw)
+		float morph = params[MORPH_PARAM].getValue() * 4.f;
 
 		// Timbre: knob sets base, CV shifts around it (±0.5 at full attenuation)
 		float timbreCV = inputs[TIMBRE_INPUT].getVoltage() / 10.f
