@@ -375,13 +375,14 @@ Multiply raw generator output by the corresponding constant before sending to a 
 
 ## Oscillator (`oscillator.hpp`)
 
-Phase-accumulator oscillator with four waveform shapes. Sine is computed via a 128-entry LUT with linear interpolation; triangle, saw, and pulse are computed analytically. Output is in `[-1, 1]`.
+Phase-accumulator oscillator with five waveform shapes. Sine is computed via a 128-entry LUT with linear interpolation; triangle, saw, and pulse are computed analytically; super saw runs 7 detuned accumulators. Output is in `[-1, 1]`.
 
 ```cpp
 struct Oscillator {
-    enum Shape : uint8_t { SINE, TRIANGLE, SAW, PULSE };
+    enum Shape : uint8_t { SINE, TRIANGLE, SAW, PULSE, SUPER_SAW };
 
-    float phase;   // Current phase in [0, 1) (readable/writable)
+    float phase;          // Current phase in [0, 1) (readable/writable)
+    float superPhase[6];  // Satellite accumulators for SUPER_SAW (readable/writable)
 
     void  reset();
     void  setPhase(float p);
@@ -392,8 +393,8 @@ struct Oscillator {
 
 | Member | Description |
 |--------|-------------|
-| `reset()` | Resets phase to 0. |
-| `setPhase(p)` | Sets phase directly. `p` is wrapped to `[0, 1)`. |
+| `reset()` | Resets all phases to their default spread. |
+| `setPhase(p)` | Sets the center phase directly. `p` is wrapped to `[0, 1)`. Satellite phases are unaffected. |
 | `process(freqHz, sampleTime, shape, timbre)` | Advances phase by `freqHz * sampleTime` and returns the output in `[-1, 1]`. `timbre` in `[0, 1]` shapes the waveform; `0.5` is neutral for all shapes. |
 | `processTZ(instFreqHz, sampleTime, shape, timbre)` | Like `process()` but uses a floor-based phase wrap that handles negative `instFreqHz`. Feed the result of `fmThroughZero()` here. |
 
@@ -405,6 +406,9 @@ struct Oscillator {
 | `TRIANGLE` | Ramp-down shape (fast fall, slow rise) | Symmetric triangle | Ramp-up/saw shape (slow fall, fast rise) |
 | `SAW` | S-curve ramp — bowed inward (fewer high harmonics, darker) | Pure sawtooth | Tanh-saturated ramp — approaches square wave (more harmonics, brighter) |
 | `PULSE` | Narrow negative pulse | Square wave | Narrow positive pulse |
+| `SUPER_SAW` | 7 oscillators in near-unison (approaches pure saw) | Standard JP-8000-style spread | Wide detune — broad, chorused tone |
+
+Note: `SUPER_SAW` timbre also affects output amplitude — detuned oscillators partially cancel, so the signal is quieter at wider spreads. Compensate with a VCA if consistent level is needed.
 
 **Example:**
 ```cpp
@@ -413,26 +417,27 @@ ataraxic_dsp::Oscillator osc;
 // In process loop (sampleTime = 1.0f / sampleRate):
 float out = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::SINE);
 
-// Brighter saw (convex phase bend):
-float saw = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::SAW, 0.8f);
+// Super saw with standard spread:
+float ss = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::SUPER_SAW);
 
 // Pulse wave with 30% duty cycle:
 float pw = osc.process(440.0f, sampleTime, ataraxic_dsp::Oscillator::PULSE, 0.3f);
 ```
 
-RAM budget on Cortex-M: ~4 bytes (phase only). The 128-entry LUT is `static const` in `detail::sine_lut()` — shared between `Oscillator` and `MorphingOscillator`, stored once in flash.
+RAM budget on Cortex-M: ~28 bytes (phase + 6 satellite phases). The 128-entry LUT is `static const` in `detail::sine_lut()` — shared between `Oscillator` and `MorphingOscillator`, stored once in flash.
 
 ---
 
 ## MorphingOscillator (`oscillator.hpp`)
 
-Phase-accumulator oscillator that continuously crossfades between four waveforms. A single `morph` parameter selects and blends adjacent shapes. Output is in `[-1, 1]`.
+Phase-accumulator oscillator that continuously crossfades between five waveforms. A single `morph` parameter selects and blends adjacent shapes. Output is in `[-1, 1]`.
 
-Waveform order: **sine → triangle → pulse → saw**
+Waveform order: **sine → triangle → pulse → saw → super saw**
 
 ```cpp
 struct MorphingOscillator {
-    float phase;   // Current phase in [0, 1) (readable/writable)
+    float phase;          // Current phase in [0, 1) (readable/writable)
+    float superPhase[6];  // Satellite accumulators for super saw (readable/writable)
 
     void  reset();
     void  setPhase(float p);
@@ -443,8 +448,8 @@ struct MorphingOscillator {
 
 | Member | Description |
 |--------|-------------|
-| `reset()` | Resets phase to 0. |
-| `setPhase(p)` | Sets phase directly. `p` is wrapped to `[0, 1)`. |
+| `reset()` | Resets all phases to their default spread. |
+| `setPhase(p)` | Sets the center phase directly. `p` is wrapped to `[0, 1)`. Satellite phases are unaffected. |
 | `process(freqHz, sampleTime, morph, timbre)` | Advances phase by `freqHz * sampleTime` and returns the crossfaded output. Constant-power crossfade and per-shape RMS normalization keep apparent volume consistent as `morph` sweeps. `timbre` in `[0, 1]` shapes the waveform(s); `0.5` is neutral for all shapes. |
 | `processTZ(instFreqHz, sampleTime, morph, timbre)` | Like `process()` but uses a floor-based phase wrap that handles negative `instFreqHz`. Feed the result of `fmThroughZero()` here. |
 
@@ -456,11 +461,13 @@ struct MorphingOscillator {
 | `1.0` | Pure triangle |
 | `2.0` | Pure pulse |
 | `3.0` | Pure saw |
+| `4.0` | Pure super saw |
 | `0.0`–`1.0` | Crossfade sine → triangle |
 | `1.0`–`2.0` | Crossfade triangle → pulse |
 | `2.0`–`3.0` | Crossfade pulse → saw |
+| `3.0`–`4.0` | Crossfade saw → super saw |
 
-Values outside `[0, 3]` are clamped. `timbre` in `[0, 1]` applies to whichever shape(s) are active; see the `Oscillator` timbre table above for per-shape behavior (default `0.5`).
+Values outside `[0, 4]` are clamped. `timbre` in `[0, 1]` applies to whichever shape(s) are active; see the `Oscillator` timbre table above for per-shape behavior (default `0.5`). Note: super saw amplitude varies with `timbre` (detune amount) — see the `Oscillator` super saw note above.
 
 **Example:**
 ```cpp
@@ -474,12 +481,15 @@ float out = osc.process(440.0f, sampleTime, 1.0f);
 // 20% pulse + 80% saw (morph = 2.8), brighter timbre:
 float out = osc.process(440.0f, sampleTime, 2.8f, 0.75f);
 
-// Sweep morph from a CV value in [0, 1] mapped to [0, 3]:
-float morphCV = clamp(cv / 10.f, 0.f, 1.f) * 3.0f;
+// Super saw with standard spread:
+float out = osc.process(440.0f, sampleTime, 4.0f);
+
+// Sweep morph from a CV value in [0, 1] mapped to [0, 4]:
+float morphCV = clamp(cv / 10.f, 0.f, 1.f) * 4.0f;
 float out = osc.process(440.0f, sampleTime, morphCV);
 ```
 
-RAM budget on Cortex-M: ~4 bytes (phase only). Shares the `detail::sine_lut()` LUT with `Oscillator`.
+RAM budget on Cortex-M: ~28 bytes (phase + 6 satellite phases). Shares the `detail::sine_lut()` LUT with `Oscillator`.
 
 ---
 

@@ -105,6 +105,48 @@ inline float wrapPhase(float p) {
     return p - std::floor(p);
 }
 
+// ---------------------------------------------------------------------------
+// Super saw helpers
+// 7-oscillator super saw: one center accumulator + 6 detuned satellites.
+// Detune offsets are three symmetric pairs, JP-8000-inspired.
+// ---------------------------------------------------------------------------
+
+// Relative-frequency detune offsets for the 6 satellite oscillators.
+inline const float* super_saw_detune_table() {
+    static const float kDetune[6] = {
+        -0.01152f, +0.01152f,
+        -0.01878f, +0.01878f,
+        -0.06858f, +0.06858f,
+    };
+    return kDetune;
+}
+
+// Advance 6 satellite phase accumulators (non-TZ).
+// detuneScale = timbre * 2: 0 = unison (pure saw), 1 = standard spread, 2 = wide.
+inline void super_saw_advance(float freqHz, float sampleTime, float detuneScale, float superPh[6]) {
+    const float* d = super_saw_detune_table();
+    for (int i = 0; i < 6; i++) {
+        superPh[i] += freqHz * (1.0f + d[i] * detuneScale) * sampleTime;
+        if (superPh[i] >= 1.0f) superPh[i] -= 1.0f;
+    }
+}
+
+// Advance 6 satellite phase accumulators (through-zero FM).
+inline void super_saw_advance_tz(float instFreqHz, float sampleTime, float detuneScale, float superPh[6]) {
+    const float* d = super_saw_detune_table();
+    for (int i = 0; i < 6; i++) {
+        superPh[i] = wrapPhase(superPh[i] + instFreqHz * (1.0f + d[i] * detuneScale) * sampleTime);
+    }
+}
+
+// Mix center + 6 satellite saws. Output in [-1, 1].
+// Amplitude is timbre-dependent: quieter when oscillators are spread (uncorrelated).
+inline float super_saw_output(float ph, const float superPh[6]) {
+    float out = 2.0f * ph - 1.0f;
+    for (int i = 0; i < 6; i++) out += 2.0f * superPh[i] - 1.0f;
+    return out * (1.0f / 7.0f);
+}
+
 } // namespace detail
 
 // ---------------------------------------------------------------------------
@@ -137,18 +179,25 @@ inline float fmThroughZero(float baseHz, float fmCV, float depth) {
 
 // ---------------------------------------------------------------------------
 // Oscillator
-// Phase-accumulator oscillator with four waveform shapes.
-// Sine uses the shared 128-entry LUT; triangle, saw, and pulse are analytical.
+// Phase-accumulator oscillator with five waveform shapes.
+// Sine uses the shared 128-entry LUT; triangle, saw, pulse, and super saw are analytical.
 // Output is in [-1, 1].
 // ---------------------------------------------------------------------------
 struct Oscillator {
-    enum Shape : uint8_t { SINE, TRIANGLE, SAW, PULSE };
+    enum Shape : uint8_t { SINE, TRIANGLE, SAW, PULSE, SUPER_SAW };
 
-    float phase;  // Current phase in [0, 1)
+    float phase;           // Current phase in [0, 1)
+    float superPhase[6];   // Satellite phase accumulators for SUPER_SAW
 
-    Oscillator() : phase(0.0f) {}
+    Oscillator() : phase(0.0f) {
+        // Spread satellite phases evenly to avoid a unison transient on first use.
+        for (int i = 0; i < 6; i++) superPhase[i] = (float)(i + 1) * (1.0f / 7.0f);
+    }
 
-    void reset() { phase = 0.0f; }
+    void reset() {
+        phase = 0.0f;
+        for (int i = 0; i < 6; i++) superPhase[i] = (float)(i + 1) * (1.0f / 7.0f);
+    }
 
     // Set phase directly. p is wrapped to [0, 1).
     void setPhase(float p) {
@@ -159,11 +208,15 @@ struct Oscillator {
     // Process one sample. Advances phase and returns the output in [-1, 1].
     //   freqHz:     oscillator frequency in Hz
     //   sampleTime: 1.0f / sampleRate
-    //   shape:      SINE, TRIANGLE, SAW, or PULSE
+    //   shape:      SINE, TRIANGLE, SAW, PULSE, or SUPER_SAW
     //   timbre:     shape-specific timbral control in [0, 1]; 0.5 is neutral for all shapes
     float process(float freqHz, float sampleTime, Shape shape, float timbre = 0.5f) {
         phase += freqHz * sampleTime;
         if (phase >= 1.0f) phase -= 1.0f;
+        if (shape == SUPER_SAW) {
+            detail::super_saw_advance(freqHz, sampleTime, timbre * 2.0f, superPhase);
+            return detail::super_saw_output(phase, superPhase);
+        }
         return _output(phase, shape, timbre);
     }
 
@@ -173,12 +226,16 @@ struct Oscillator {
     float processTZ(float instFreqHz, float sampleTime, Shape shape, float timbre = 0.5f) {
         phase += instFreqHz * sampleTime;
         phase  = detail::wrapPhase(phase);
+        if (shape == SUPER_SAW) {
+            detail::super_saw_advance_tz(instFreqHz, sampleTime, timbre * 2.0f, superPhase);
+            return detail::super_saw_output(phase, superPhase);
+        }
         return _output(phase, shape, timbre);
     }
 
 private:
     // Map Oscillator::Shape enum to detail::osc_shape indices.
-    // Oscillator enum: SINE=0, TRIANGLE=1, SAW=2, PULSE=3
+    // Oscillator enum: SINE=0, TRIANGLE=1, SAW=2, PULSE=3  (SUPER_SAW handled before this)
     // osc_shape index: SINE=0, TRIANGLE=1, PULSE=2, SAW=3  (morph ordering)
     static float _output(float ph, Shape shape, float timbre) {
         switch (shape) {
@@ -193,22 +250,29 @@ private:
 
 // ---------------------------------------------------------------------------
 // MorphingOscillator
-// Phase-accumulator oscillator that crossfades between four waveforms:
-//   sine (0) → triangle (1) → pulse (2) → saw (3)
+// Phase-accumulator oscillator that crossfades between five waveforms:
+//   sine (0) → triangle (1) → pulse (2) → saw (3) → super saw (4)
 //
-// The `morph` parameter in [0, 3] selects and blends adjacent shapes:
+// The `morph` parameter in [0, 4] selects and blends adjacent shapes:
 //   morph = 0.0  → pure sine
 //   morph = 1.0  → pure triangle
 //   morph = 2.0  → pure pulse
 //   morph = 3.0  → pure saw
-//   morph = 2.8  → 20% pulse + 80% saw
+//   morph = 4.0  → pure super saw
+//   morph = 3.5  → 50% saw + 50% super saw (constant-power crossfade)
 // ---------------------------------------------------------------------------
 struct MorphingOscillator {
-    float phase;  // Current phase in [0, 1)
+    float phase;           // Current phase in [0, 1)
+    float superPhase[6];   // Satellite phase accumulators for super saw
 
-    MorphingOscillator() : phase(0.0f) {}
+    MorphingOscillator() : phase(0.0f) {
+        for (int i = 0; i < 6; i++) superPhase[i] = (float)(i + 1) * (1.0f / 7.0f);
+    }
 
-    void reset() { phase = 0.0f; }
+    void reset() {
+        phase = 0.0f;
+        for (int i = 0; i < 6; i++) superPhase[i] = (float)(i + 1) * (1.0f / 7.0f);
+    }
 
     // Set phase directly. p is wrapped to [0, 1).
     void setPhase(float p) {
@@ -219,12 +283,13 @@ struct MorphingOscillator {
     // Process one sample. Advances phase and returns the crossfaded output in [-1, 1].
     //   freqHz:     oscillator frequency in Hz
     //   sampleTime: 1.0f / sampleRate
-    //   morph:      waveform position in [0, 3]; clamped at the boundaries
+    //   morph:      waveform position in [0, 4]; clamped at the boundaries
     //   timbre:     shape-specific timbral control in [0, 1]; 0.5 is neutral for all shapes
     float process(float freqHz, float sampleTime, float morph, float timbre = 0.5f) {
         phase += freqHz * sampleTime;
         if (phase >= 1.0f) phase -= 1.0f;
-        return _morphOutput(phase, morph, timbre);
+        detail::super_saw_advance(freqHz, sampleTime, timbre * 2.0f, superPhase);
+        return _morphOutput(phase, morph, timbre, superPhase);
     }
 
     // Process one sample with through-zero FM.
@@ -233,24 +298,34 @@ struct MorphingOscillator {
     float processTZ(float instFreqHz, float sampleTime, float morph, float timbre = 0.5f) {
         phase += instFreqHz * sampleTime;
         phase  = detail::wrapPhase(phase);
-        return _morphOutput(phase, morph, timbre);
+        detail::super_saw_advance_tz(instFreqHz, sampleTime, timbre * 2.0f, superPhase);
+        return _morphOutput(phase, morph, timbre, superPhase);
     }
 
 private:
     // Per-shape RMS normalization gains (at neutral timbre = 0.5):
-    //   Sine:     RMS = 1/√2  → gain = √(2/3) ≈ 0.8165
-    //   Triangle: RMS = 1/√3  → gain = 1.0 (reference)
-    //   Pulse:    RMS = 1.0   → gain = 1/√3  ≈ 0.5774
-    //   Saw:      RMS = 1/√3  → gain = 1.0
+    //   Sine:      RMS = 1/√2  → gain = √(2/3) ≈ 0.8165
+    //   Triangle:  RMS = 1/√3  → gain = 1.0 (reference)
+    //   Pulse:     RMS = 1.0   → gain = 1/√3  ≈ 0.5774
+    //   Saw:       RMS = 1/√3  → gain = 1.0
+    //   Super saw: gain = 1.0; amplitude varies with detune (timbre) — quieter when spread.
     // Normalizing to triangle/saw keeps all peak outputs within [-1, 1].
     static float _shapeGain(int idx) {
-        static const float kGain[4] = { 0.8165f, 1.0f, 0.5774f, 1.0f };
+        static const float kGain[5] = { 0.8165f, 1.0f, 0.5774f, 1.0f, 1.0f };
         return kGain[idx];
     }
 
-    static float _morphOutput(float ph, float morph, float timbre) {
+    static float _morphOutput(float ph, float morph, float timbre, const float superPh[6]) {
         if (morph <= 0.0f) return _shapeGain(0) * detail::osc_shape(ph, 0, timbre);
-        if (morph >= 3.0f) return _shapeGain(3) * detail::osc_shape(ph, 3, timbre);
+        if (morph >= 4.0f) return _shapeGain(4) * detail::super_saw_output(ph, superPh);
+        if (morph >= 3.0f) {
+            // Crossfade: saw → super saw
+            float frac = morph - 3.0f;
+            float ga   = std::cos(frac * (3.14159265f * 0.5f));
+            float gb   = std::sin(frac * (3.14159265f * 0.5f));
+            return ga * (_shapeGain(3) * detail::osc_shape(ph, 3, timbre))
+                 + gb * (_shapeGain(4) * detail::super_saw_output(ph, superPh));
+        }
         int   base = (int)morph;
         float frac = morph - (float)base;
         // Constant-power crossfade: maintains RMS through the blend.
