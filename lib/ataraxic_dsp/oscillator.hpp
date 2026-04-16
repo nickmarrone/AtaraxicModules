@@ -57,9 +57,9 @@ inline float osc_sine(float ph) {
 //
 //   PULSE (2): Pulse width. timbre = duty cycle; 0.5 → square wave.
 //
-//   SAW  (3): Quadratic phase bend. timbre=0.5 → pure saw; toward 0 → concave
-//             ramp (slow start, fast finish — darker); toward 1 → convex ramp
-//             (fast start, slow finish — brighter).
+//   SAW  (3): Waveshaper. timbre=0.5 → pure saw.
+//             toward 1 → tanh saturation (ramp clips toward a square wave — brighter).
+//             toward 0 → S-curve softening via sin(π/2·saw) (rounded ramp — darker).
 inline float osc_shape(float ph, int shapeIdx, float timbre) {
     switch (shapeIdx) {
         case 0: {
@@ -80,10 +80,19 @@ inline float osc_shape(float ph, int shapeIdx, float timbre) {
             // Pulse width modulation.
             return (ph < timbre) ? 1.0f : -1.0f;
         case 3: {
-            // Quadratic phase bend: k=0 (timbre=0.5) → pure saw.
-            float k    = 2.0f * (timbre - 0.5f);         // [-1, 1]
-            float bent = ph + k * ph * (1.0f - ph);       // [0, 1]
-            return 2.0f * bent - 1.0f;
+            float saw = 2.0f * ph - 1.0f;  // pure saw in [-1, 1]
+            if (timbre >= 0.5f) {
+                // Tanh saturation: clips toward a square wave (brighter).
+                float dist  = (timbre - 0.5f) * 2.0f;   // [0, 1]
+                float drive = dist * dist * 80.0f;        // [0, 80]
+                if (drive < 0.001f) return saw;
+                return std::tanh(drive * saw) / std::tanh(drive);
+            } else {
+                // S-curve softening: sin(π/2·saw) bows the ramp inward (darker).
+                float soft     = (0.5f - timbre) * 2.0f; // [0, 1]
+                float soft_saw = std::sin(saw * 1.5707963f);
+                return (1.0f - soft) * saw + soft * soft_saw;
+            }
         }
         default:
             return 0.0f;

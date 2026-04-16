@@ -403,7 +403,7 @@ struct Oscillator {
 |-------|-------------|--------------------------|-------------|
 | `SINE` | Phase distorted early — asymmetric harmonics | Pure sine | Phase distorted late — asymmetric harmonics |
 | `TRIANGLE` | Ramp-down shape (fast fall, slow rise) | Symmetric triangle | Ramp-up/saw shape (slow fall, fast rise) |
-| `SAW` | Concave ramp — slow start, fast finish (darker) | Pure sawtooth | Convex ramp — fast start, slow finish (brighter) |
+| `SAW` | S-curve ramp — bowed inward (fewer high harmonics, darker) | Pure sawtooth | Tanh-saturated ramp — approaches square wave (more harmonics, brighter) |
 | `PULSE` | Narrow negative pulse | Square wave | Narrow positive pulse |
 
 **Example:**
