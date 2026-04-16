@@ -381,8 +381,9 @@ Phase-accumulator oscillator with five waveform shapes. Sine is computed via a 1
 struct Oscillator {
     enum Shape : uint8_t { SINE, TRIANGLE, SAW, PULSE, SUPER_SAW };
 
-    float phase;          // Current phase in [0, 1) (readable/writable)
-    float superPhase[6];  // Satellite accumulators for SUPER_SAW (readable/writable)
+    float phase;            // Current phase in [0, 1) (readable/writable)
+    float superPhase[6];    // Satellite accumulators for SUPER_SAW (readable/writable)
+    float superRmsSq;       // RMS² follower state for SUPER_SAW gain (init 1/3, reset on reset())
 
     void  reset();
     void  setPhase(float p);
@@ -408,7 +409,7 @@ struct Oscillator {
 | `PULSE` | Narrow negative pulse | Square wave | Narrow positive pulse |
 | `SUPER_SAW` | All 7 oscillators in unison — pure saw | Standard JP-8000-style spread | Wide detune — broad, chorused tone |
 
-Gain compensation is applied automatically so the RMS matches the other shapes across the timbre range. At very low timbre (near-unison) the oscillators can briefly realign after a phase reset, producing a transient that may exceed ±1; this bloom is characteristic of the super saw sound.
+Gain compensation uses a one-pole RMS² follower (~100 ms time constant) so level tracks the oscillators' actual phase spread rather than a static formula. This means the gain responds correctly whether timbre is held steady, swept slowly, or snapped. Output may transiently exceed ±1 when oscillator phases briefly realign after being spread; this bloom is characteristic of the super saw sound.
 
 **Example:**
 ```cpp
@@ -436,8 +437,9 @@ Waveform order: **sine → triangle → pulse → saw → super saw**
 
 ```cpp
 struct MorphingOscillator {
-    float phase;          // Current phase in [0, 1) (readable/writable)
-    float superPhase[6];  // Satellite accumulators for super saw (readable/writable)
+    float phase;            // Current phase in [0, 1) (readable/writable)
+    float superPhase[6];    // Satellite accumulators for super saw (readable/writable)
+    float superRmsSq;       // RMS² follower state for super saw gain (init 1/3, reset on reset())
 
     void  reset();
     void  setPhase(float p);

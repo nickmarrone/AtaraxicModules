@@ -139,17 +139,28 @@ inline void super_saw_advance_tz(float instFreqHz, float sampleTime, float detun
     }
 }
 
-// Mix center + 6 satellite saws with RMS-matched gain compensation.
-// At unison (detuneScale=0) the 7 oscillators are correlated → gain=1, output ∈ [-1, 1].
-// As oscillators spread and decorrelate the average RMS drops by 1/√7; gain ramps up to
-// √7 over detuneScale ∈ [0, 1] to restore RMS to 1/√3 (same as saw / triangle reference).
-// At detuneScale > 0 the output may transiently exceed ±1 when phases briefly realign.
-inline float super_saw_output(float ph, const float superPh[6], float detuneScale) {
-    float out = 2.0f * ph - 1.0f;
-    for (int i = 0; i < 6; i++) out += 2.0f * superPh[i] - 1.0f;
-    float t    = detuneScale < 1.0f ? detuneScale : 1.0f;  // clamp to [0, 1]
-    float gain = 1.0f + 1.6458f * t;                        // 1 → √7 (1.6458 ≈ √7 − 1)
-    return out * gain * (1.0f / 7.0f);
+// Mix center + 6 satellite saws and apply dynamic RMS gain compensation.
+//
+// rmsSq is a persistent one-pole RMS² estimate (caller owns the state, init to 1/3).
+// It tracks the actual raw output level with a ~100 ms time constant so that gain
+// responds correctly regardless of how timbre changes over time:
+//   - Oscillators just spreading from unison → gain climbs gradually as RMS falls.
+//   - Oscillators already spread, timbre swept back toward 0 → gain follows the real
+//     phase distribution rather than the theoretical steady-state value.
+// Target RMS is 1/√3 (same as saw/triangle reference). Output may transiently exceed
+// ±1 when oscillator phases briefly realign after being spread.
+inline float super_saw_normalized(float ph, const float superPh[6],
+                                   float sampleTime, float& rmsSq) {
+    float raw = 2.0f * ph - 1.0f;
+    for (int i = 0; i < 6; i++) raw += 2.0f * superPh[i] - 1.0f;
+    raw *= (1.0f / 7.0f);
+    // One-pole RMS² follower: tau ≈ 100 ms at any sample rate.
+    float alpha = sampleTime * 10.0f;
+    if (alpha > 0.1f) alpha = 0.1f;
+    rmsSq = rmsSq + alpha * (raw * raw - rmsSq);
+    // Gain = target_rms / measured_rms; guard against near-zero.
+    float rms  = std::sqrt(rmsSq > 1e-8f ? rmsSq : 1e-8f);
+    return raw * (0.5774f / rms);  // 0.5774 = 1/√3
 }
 
 } // namespace detail
@@ -191,16 +202,18 @@ inline float fmThroughZero(float baseHz, float fmCV, float depth) {
 struct Oscillator {
     enum Shape : uint8_t { SINE, TRIANGLE, SAW, PULSE, SUPER_SAW };
 
-    float phase;           // Current phase in [0, 1)
-    float superPhase[6];   // Satellite phase accumulators for SUPER_SAW
+    float phase;            // Current phase in [0, 1)
+    float superPhase[6];    // Satellite phase accumulators for SUPER_SAW
+    float superRmsSq;       // One-pole RMS² state for SUPER_SAW gain tracking
 
-    Oscillator() : phase(0.0f) {
+    Oscillator() : phase(0.0f), superRmsSq(1.0f / 3.0f) {
         // Start satellites in unison with the center so timbre=0 gives a pure saw.
         for (int i = 0; i < 6; i++) superPhase[i] = 0.0f;
     }
 
     void reset() {
-        phase = 0.0f;
+        phase     = 0.0f;
+        superRmsSq = 1.0f / 3.0f;
         for (int i = 0; i < 6; i++) superPhase[i] = 0.0f;
     }
 
@@ -219,9 +232,8 @@ struct Oscillator {
         phase += freqHz * sampleTime;
         if (phase >= 1.0f) phase -= 1.0f;
         if (shape == SUPER_SAW) {
-            float ds = timbre * 2.0f;
-            detail::super_saw_advance(freqHz, sampleTime, ds, superPhase);
-            return detail::super_saw_output(phase, superPhase, ds);
+            detail::super_saw_advance(freqHz, sampleTime, timbre * 2.0f, superPhase);
+            return detail::super_saw_normalized(phase, superPhase, sampleTime, superRmsSq);
         }
         return _output(phase, shape, timbre);
     }
@@ -233,9 +245,8 @@ struct Oscillator {
         phase += instFreqHz * sampleTime;
         phase  = detail::wrapPhase(phase);
         if (shape == SUPER_SAW) {
-            float ds = timbre * 2.0f;
-            detail::super_saw_advance_tz(instFreqHz, sampleTime, ds, superPhase);
-            return detail::super_saw_output(phase, superPhase, ds);
+            detail::super_saw_advance_tz(instFreqHz, sampleTime, timbre * 2.0f, superPhase);
+            return detail::super_saw_normalized(phase, superPhase, sampleTime, superRmsSq);
         }
         return _output(phase, shape, timbre);
     }
@@ -269,15 +280,17 @@ private:
 //   morph = 3.5  → 50% saw + 50% super saw (constant-power crossfade)
 // ---------------------------------------------------------------------------
 struct MorphingOscillator {
-    float phase;           // Current phase in [0, 1)
-    float superPhase[6];   // Satellite phase accumulators for super saw
+    float phase;            // Current phase in [0, 1)
+    float superPhase[6];    // Satellite phase accumulators for super saw
+    float superRmsSq;       // One-pole RMS² state for super saw gain tracking
 
-    MorphingOscillator() : phase(0.0f) {
+    MorphingOscillator() : phase(0.0f), superRmsSq(1.0f / 3.0f) {
         for (int i = 0; i < 6; i++) superPhase[i] = 0.0f;
     }
 
     void reset() {
-        phase = 0.0f;
+        phase      = 0.0f;
+        superRmsSq = 1.0f / 3.0f;
         for (int i = 0; i < 6; i++) superPhase[i] = 0.0f;
     }
 
@@ -296,7 +309,7 @@ struct MorphingOscillator {
         phase += freqHz * sampleTime;
         if (phase >= 1.0f) phase -= 1.0f;
         detail::super_saw_advance(freqHz, sampleTime, timbre * 2.0f, superPhase);
-        return _morphOutput(phase, morph, timbre, superPhase);
+        return _morphOutput(phase, morph, timbre, superPhase, sampleTime, superRmsSq);
     }
 
     // Process one sample with through-zero FM.
@@ -306,7 +319,7 @@ struct MorphingOscillator {
         phase += instFreqHz * sampleTime;
         phase  = detail::wrapPhase(phase);
         detail::super_saw_advance_tz(instFreqHz, sampleTime, timbre * 2.0f, superPhase);
-        return _morphOutput(phase, morph, timbre, superPhase);
+        return _morphOutput(phase, morph, timbre, superPhase, sampleTime, superRmsSq);
     }
 
 private:
@@ -315,24 +328,26 @@ private:
     //   Triangle:  RMS = 1/√3  → gain = 1.0 (reference)
     //   Pulse:     RMS = 1.0   → gain = 1/√3  ≈ 0.5774
     //   Saw:       RMS = 1/√3  → gain = 1.0
-    //   Super saw: gain = 1.0; RMS compensation is baked into super_saw_output() per-sample.
+    //   Super saw: gain = 1.0; RMS compensation is applied by super_saw_normalized() per-sample.
     // Normalizing to triangle/saw keeps all peak outputs within [-1, 1].
     static float _shapeGain(int idx) {
         static const float kGain[5] = { 0.8165f, 1.0f, 0.5774f, 1.0f, 1.0f };
         return kGain[idx];
     }
 
-    static float _morphOutput(float ph, float morph, float timbre, const float superPh[6]) {
-        float ds = timbre * 2.0f;  // detuneScale for super saw gain compensation
+    static float _morphOutput(float ph, float morph, float timbre, const float superPh[6],
+                               float sampleTime, float& superRmsSq) {
         if (morph <= 0.0f) return _shapeGain(0) * detail::osc_shape(ph, 0, timbre);
-        if (morph >= 4.0f) return _shapeGain(4) * detail::super_saw_output(ph, superPh, ds);
+        if (morph >= 4.0f)
+            return _shapeGain(4) * detail::super_saw_normalized(ph, superPh, sampleTime, superRmsSq);
         if (morph >= 3.0f) {
             // Crossfade: saw → super saw
             float frac = morph - 3.0f;
             float ga   = std::cos(frac * (3.14159265f * 0.5f));
             float gb   = std::sin(frac * (3.14159265f * 0.5f));
+            float ss   = detail::super_saw_normalized(ph, superPh, sampleTime, superRmsSq);
             return ga * (_shapeGain(3) * detail::osc_shape(ph, 3, timbre))
-                 + gb * (_shapeGain(4) * detail::super_saw_output(ph, superPh, ds));
+                 + gb * (_shapeGain(4) * ss);
         }
         int   base = (int)morph;
         float frac = morph - (float)base;
