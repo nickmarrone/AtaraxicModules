@@ -139,12 +139,17 @@ inline void super_saw_advance_tz(float instFreqHz, float sampleTime, float detun
     }
 }
 
-// Mix center + 6 satellite saws. Output in [-1, 1].
-// Amplitude is timbre-dependent: quieter when oscillators are spread (uncorrelated).
-inline float super_saw_output(float ph, const float superPh[6]) {
+// Mix center + 6 satellite saws with RMS-matched gain compensation.
+// At unison (detuneScale=0) the 7 oscillators are correlated → gain=1, output ∈ [-1, 1].
+// As oscillators spread and decorrelate the average RMS drops by 1/√7; gain ramps up to
+// √7 over detuneScale ∈ [0, 1] to restore RMS to 1/√3 (same as saw / triangle reference).
+// At detuneScale > 0 the output may transiently exceed ±1 when phases briefly realign.
+inline float super_saw_output(float ph, const float superPh[6], float detuneScale) {
     float out = 2.0f * ph - 1.0f;
     for (int i = 0; i < 6; i++) out += 2.0f * superPh[i] - 1.0f;
-    return out * (1.0f / 7.0f);
+    float t    = detuneScale < 1.0f ? detuneScale : 1.0f;  // clamp to [0, 1]
+    float gain = 1.0f + 1.6458f * t;                        // 1 → √7 (1.6458 ≈ √7 − 1)
+    return out * gain * (1.0f / 7.0f);
 }
 
 } // namespace detail
@@ -190,13 +195,13 @@ struct Oscillator {
     float superPhase[6];   // Satellite phase accumulators for SUPER_SAW
 
     Oscillator() : phase(0.0f) {
-        // Spread satellite phases evenly to avoid a unison transient on first use.
-        for (int i = 0; i < 6; i++) superPhase[i] = (float)(i + 1) * (1.0f / 7.0f);
+        // Start satellites in unison with the center so timbre=0 gives a pure saw.
+        for (int i = 0; i < 6; i++) superPhase[i] = 0.0f;
     }
 
     void reset() {
         phase = 0.0f;
-        for (int i = 0; i < 6; i++) superPhase[i] = (float)(i + 1) * (1.0f / 7.0f);
+        for (int i = 0; i < 6; i++) superPhase[i] = 0.0f;
     }
 
     // Set phase directly. p is wrapped to [0, 1).
@@ -214,8 +219,9 @@ struct Oscillator {
         phase += freqHz * sampleTime;
         if (phase >= 1.0f) phase -= 1.0f;
         if (shape == SUPER_SAW) {
-            detail::super_saw_advance(freqHz, sampleTime, timbre * 2.0f, superPhase);
-            return detail::super_saw_output(phase, superPhase);
+            float ds = timbre * 2.0f;
+            detail::super_saw_advance(freqHz, sampleTime, ds, superPhase);
+            return detail::super_saw_output(phase, superPhase, ds);
         }
         return _output(phase, shape, timbre);
     }
@@ -227,8 +233,9 @@ struct Oscillator {
         phase += instFreqHz * sampleTime;
         phase  = detail::wrapPhase(phase);
         if (shape == SUPER_SAW) {
-            detail::super_saw_advance_tz(instFreqHz, sampleTime, timbre * 2.0f, superPhase);
-            return detail::super_saw_output(phase, superPhase);
+            float ds = timbre * 2.0f;
+            detail::super_saw_advance_tz(instFreqHz, sampleTime, ds, superPhase);
+            return detail::super_saw_output(phase, superPhase, ds);
         }
         return _output(phase, shape, timbre);
     }
@@ -266,12 +273,12 @@ struct MorphingOscillator {
     float superPhase[6];   // Satellite phase accumulators for super saw
 
     MorphingOscillator() : phase(0.0f) {
-        for (int i = 0; i < 6; i++) superPhase[i] = (float)(i + 1) * (1.0f / 7.0f);
+        for (int i = 0; i < 6; i++) superPhase[i] = 0.0f;
     }
 
     void reset() {
         phase = 0.0f;
-        for (int i = 0; i < 6; i++) superPhase[i] = (float)(i + 1) * (1.0f / 7.0f);
+        for (int i = 0; i < 6; i++) superPhase[i] = 0.0f;
     }
 
     // Set phase directly. p is wrapped to [0, 1).
@@ -308,7 +315,7 @@ private:
     //   Triangle:  RMS = 1/√3  → gain = 1.0 (reference)
     //   Pulse:     RMS = 1.0   → gain = 1/√3  ≈ 0.5774
     //   Saw:       RMS = 1/√3  → gain = 1.0
-    //   Super saw: gain = 1.0; amplitude varies with detune (timbre) — quieter when spread.
+    //   Super saw: gain = 1.0; RMS compensation is baked into super_saw_output() per-sample.
     // Normalizing to triangle/saw keeps all peak outputs within [-1, 1].
     static float _shapeGain(int idx) {
         static const float kGain[5] = { 0.8165f, 1.0f, 0.5774f, 1.0f, 1.0f };
@@ -316,15 +323,16 @@ private:
     }
 
     static float _morphOutput(float ph, float morph, float timbre, const float superPh[6]) {
+        float ds = timbre * 2.0f;  // detuneScale for super saw gain compensation
         if (morph <= 0.0f) return _shapeGain(0) * detail::osc_shape(ph, 0, timbre);
-        if (morph >= 4.0f) return _shapeGain(4) * detail::super_saw_output(ph, superPh);
+        if (morph >= 4.0f) return _shapeGain(4) * detail::super_saw_output(ph, superPh, ds);
         if (morph >= 3.0f) {
             // Crossfade: saw → super saw
             float frac = morph - 3.0f;
             float ga   = std::cos(frac * (3.14159265f * 0.5f));
             float gb   = std::sin(frac * (3.14159265f * 0.5f));
             return ga * (_shapeGain(3) * detail::osc_shape(ph, 3, timbre))
-                 + gb * (_shapeGain(4) * detail::super_saw_output(ph, superPh));
+                 + gb * (_shapeGain(4) * detail::super_saw_output(ph, superPh, ds));
         }
         int   base = (int)morph;
         float frac = morph - (float)base;

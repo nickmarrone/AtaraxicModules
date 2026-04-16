@@ -406,9 +406,9 @@ struct Oscillator {
 | `TRIANGLE` | Ramp-down shape (fast fall, slow rise) | Symmetric triangle | Ramp-up/saw shape (slow fall, fast rise) |
 | `SAW` | S-curve ramp — bowed inward (fewer high harmonics, darker) | Pure sawtooth | Tanh-saturated ramp — approaches square wave (more harmonics, brighter) |
 | `PULSE` | Narrow negative pulse | Square wave | Narrow positive pulse |
-| `SUPER_SAW` | 7 oscillators in near-unison (approaches pure saw) | Standard JP-8000-style spread | Wide detune — broad, chorused tone |
+| `SUPER_SAW` | All 7 oscillators in unison — pure saw | Standard JP-8000-style spread | Wide detune — broad, chorused tone |
 
-Note: `SUPER_SAW` timbre also affects output amplitude — detuned oscillators partially cancel, so the signal is quieter at wider spreads. Compensate with a VCA if consistent level is needed.
+Gain compensation is applied automatically so the RMS matches the other shapes across the timbre range. At very low timbre (near-unison) the oscillators can briefly realign after a phase reset, producing a transient that may exceed ±1; this bloom is characteristic of the super saw sound.
 
 **Example:**
 ```cpp
@@ -467,7 +467,7 @@ struct MorphingOscillator {
 | `2.0`–`3.0` | Crossfade pulse → saw |
 | `3.0`–`4.0` | Crossfade saw → super saw |
 
-Values outside `[0, 4]` are clamped. `timbre` in `[0, 1]` applies to whichever shape(s) are active; see the `Oscillator` timbre table above for per-shape behavior (default `0.5`). Note: super saw amplitude varies with `timbre` (detune amount) — see the `Oscillator` super saw note above.
+Values outside `[0, 4]` are clamped. `timbre` in `[0, 1]` applies to whichever shape(s) are active; see the `Oscillator` timbre table above for per-shape behavior (default `0.5`). Gain compensation is applied automatically — see the `Oscillator` super saw note above.
 
 **Example:**
 ```cpp
